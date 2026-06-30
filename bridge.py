@@ -27,6 +27,7 @@ from models import (
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
+    PublishStatusAction,
     RequestStatusAction,
     SendDeviceCommandAction,
     SendMochadCommandAction,
@@ -162,7 +163,7 @@ class Bridge:
             "Bridge Running elapsed=%.3fs",
             time.monotonic() - started,
         )
-        self._write_health("running")
+        self._write_health("starting")
 
     def stop(self) -> None:
         started = time.monotonic()
@@ -184,7 +185,9 @@ class Bridge:
         self.start()
 
         while self._running:
-            self._write_health("running")
+            self._write_health(
+                "running" if self.state.available else "starting"
+            )
             time.sleep(1)
 
     def run(self) -> None:
@@ -196,7 +199,24 @@ class Bridge:
         actions: Iterable[BridgeAction],
     ) -> None:
         for action in actions:
-            self.execute_action(action)
+            try:
+                self.execute_action(action)
+            except (ConnectionError, OSError) as exc:
+                _LOG.warning(
+                    "Bridge action failed action=%s error=%s",
+                    type(action).__name__,
+                    exc,
+                )
+
+                if isinstance(
+                    action,
+                    (
+                        RequestStatusAction,
+                        SendDeviceCommandAction,
+                        SendMochadCommandAction,
+                    ),
+                ):
+                    break
 
     def execute_action(
         self,
@@ -255,6 +275,23 @@ class Bridge:
                 action.online,
             )
             self.clients.mqtt.publish_availability(action.online)
+            return
+
+        if isinstance(action, PublishStatusAction):
+            _LOG.info(
+                "MQTT publish status status=%s mqtt_connected=%s mochad_connected=%s",
+                action.status,
+                action.mqtt_connected,
+                action.mochad_connected,
+            )
+            self.clients.mqtt.publish_status(
+                {
+                    "status": action.status,
+                    "mqtt_connected": action.mqtt_connected,
+                    "mochad_connected": action.mochad_connected,
+                },
+                retain=action.retain,
+            )
             return
 
         if isinstance(action, SendMochadCommandAction):
@@ -347,6 +384,9 @@ class Bridge:
     def _on_mqtt_connected(self) -> None:
         _LOG.info("MQTT connected")
         self.execute_actions(self.state.mqtt_connected())
+        self._write_health(
+            "running" if self.state.available else "starting"
+        )
 
     def _on_mqtt_disconnected(
         self,
@@ -357,10 +397,14 @@ class Bridge:
             reason_code,
         )
         self.execute_actions(self.state.mqtt_disconnected())
+        self._write_health("starting")
 
     def _on_mochad_connected(self) -> None:
         _LOG.info("mochad connected")
         self.execute_actions(self.state.mochad_connected())
+        self._write_health(
+            "running" if self.state.available else "starting"
+        )
 
     def _on_mochad_disconnected(
         self,
@@ -372,6 +416,7 @@ class Bridge:
             _LOG.warning("mochad disconnected")
 
         self.execute_actions(self.state.mochad_disconnected())
+        self._write_health("starting")
 
     def _on_mochad_line(
         self,

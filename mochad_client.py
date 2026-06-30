@@ -102,7 +102,10 @@ class MochadClient:
             self._socket = sock
 
         if self._connect_callback:
-            self._connect_callback()
+            try:
+                self._connect_callback()
+            except Exception:
+                _LOG.exception("mochad connect callback failed")
 
     def disconnect(self) -> None:
         with self._socket_lock:
@@ -146,7 +149,10 @@ class MochadClient:
                 self.disconnect()
 
                 if self._disconnect_callback:
-                    self._disconnect_callback(error)
+                    try:
+                        self._disconnect_callback(error)
+                    except Exception:
+                        _LOG.exception("mochad disconnect callback failed")
 
             if self._running:
                 time.sleep(self.reconnect_delay)
@@ -188,4 +194,7 @@ class MochadClient:
                     )
 
                 if self._line_callback:
-                    self._line_callback(line)
+                    try:
+                        self._line_callback(line)
+                    except Exception:
+                        _LOG.exception("mochad line callback failed")

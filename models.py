@@ -386,6 +386,18 @@ class PublishAvailabilityAction(BridgeAction):
 
 
 @dataclass(slots=True, frozen=True)
+class PublishStatusAction(BridgeAction):
+
+    status: str
+
+    mqtt_connected: bool
+
+    mochad_connected: bool
+
+    retain: bool = True
+
+
+@dataclass(slots=True, frozen=True)
 class SendMochadCommandAction(BridgeAction):
 
     command: str

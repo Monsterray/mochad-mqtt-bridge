@@ -277,17 +277,6 @@ class MqttClient:
             retain=retain,
         )
 
-    def publish_statistics(
-        self,
-        payload: Payload,
-        retain: bool = True,
-    ) -> None:
-        self.publish(
-            Topics.statistics(base_topic=self.base_topic),
-            payload,
-            retain=retain,
-        )
-
     def _configure_client(self) -> None:
         if self.username:
             _LOG.info("MQTT username configured")
@@ -322,7 +311,10 @@ class MqttClient:
         self.subscribe_commands()
 
         if self._connect_callback:
-            self._connect_callback()
+            try:
+                self._connect_callback()
+            except Exception:
+                _LOG.exception("MQTT connect callback failed")
 
     def _on_disconnect(
         self,
@@ -347,9 +339,12 @@ class MqttClient:
             )
 
         if self._disconnect_callback:
-            self._disconnect_callback(
-                reason_number
-            )
+            try:
+                self._disconnect_callback(
+                    reason_number
+                )
+            except Exception:
+                _LOG.exception("MQTT disconnect callback failed")
 
     def _on_message(
         self,
@@ -387,13 +382,19 @@ class MqttClient:
         )
 
         if self._command_callback:
-            self._command_callback(
-                MqttCommandMessage(
-                    device=device,
-                    payload=payload,
-                    topic=message.topic,
+            try:
+                self._command_callback(
+                    MqttCommandMessage(
+                        device=device,
+                        payload=payload,
+                        topic=message.topic,
+                    )
                 )
-            )
+            except Exception:
+                _LOG.exception(
+                    "MQTT command callback failed topic=%s",
+                    message.topic,
+                )
 
     @staticmethod
     def _serialize_payload(payload: Payload) -> str:

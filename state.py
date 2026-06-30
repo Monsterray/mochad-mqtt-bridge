@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Iterable
 
 from models import (
@@ -26,6 +27,7 @@ from models import (
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
+    PublishStatusAction,
     RequestStatusAction,
     SendDeviceCommandAction,
     StatusSnapshot,
@@ -64,6 +66,7 @@ class StateManager:
         devices: Iterable[DeviceConfig] | dict[str, DeviceConfig] | None = None,
         optimistic_updates: bool = True,
     ) -> None:
+        self._lock = RLock()
         self._devices: dict[str, DeviceState] = {}
         self._statistics = BridgeStatistics()
         self._mqtt_connected = False
@@ -90,22 +93,23 @@ class StateManager:
         if event is None:
             return []
 
-        if isinstance(event, DeviceEvent):
-            return self._apply_device_event(event)
+        with self._lock:
+            if isinstance(event, DeviceEvent):
+                return self._apply_device_event(event)
 
-        if isinstance(event, HouseEvent):
-            return self._apply_house_event(event)
+            if isinstance(event, HouseEvent):
+                return self._apply_house_event(event)
 
-        if isinstance(event, StatusSnapshot):
-            return self._apply_status_snapshot(event)
+            if isinstance(event, StatusSnapshot):
+                return self._apply_status_snapshot(event)
 
-        if isinstance(event, UnknownEvent):
-            self._statistics.unknown_packets += 1
-            return [LogUnknownEventAction(event=event)]
+            if isinstance(event, UnknownEvent):
+                self._statistics.unknown_packets += 1
+                return [LogUnknownEventAction(event=event)]
 
-        raise TypeError(
-            f"Unsupported state event {type(event).__name__}."
-        )
+            raise TypeError(
+                f"Unsupported state event {type(event).__name__}."
+            )
 
     def optimistic_update(
         self,
@@ -116,106 +120,107 @@ class StateManager:
         Record a requested outbound device command.
         """
 
-        state = self._ensure_device(address)
-        state.pending_command = command
-        self._statistics.commands_sent += 1
+        with self._lock:
+            state = self._ensure_device(address)
+            state.pending_command = command
+            self._statistics.commands_sent += 1
 
-        actions = self._discovery_actions(state)
-        actions.append(
-            SendDeviceCommandAction(
-                address=state.address,
-                command=command,
-            )
-        )
-
-        if self._optimistic_updates:
-            actions.extend(
-                self._set_device_state(
-                    state=state,
+            actions = self._discovery_actions(state)
+            actions.append(
+                SendDeviceCommandAction(
+                    address=state.address,
                     command=command,
-                    now=self._now(),
-                    retain=True,
-                    clear_pending=False,
                 )
             )
 
-        return actions
-
-    def mqtt_connected(self) -> list[BridgeAction]:
-        was_connected = self._mqtt_connected
-        self._mqtt_connected = True
-        self._mqtt_generation += 1
-
-        if self._mqtt_has_connected and not was_connected:
-            self._statistics.mqtt_reconnects += 1
-
-        self._mqtt_has_connected = True
-        self._statistics.mqtt_connections += 1
-
-        actions: list[BridgeAction] = [
-            PublishAvailabilityAction(online=self._bridge_available())
-        ]
-
-        for state in self._devices.values():
-            state.discovered = False
-            actions.append(
-                PublishDiscoveryAction(address=state.address)
-            )
-            self._statistics.discovery_messages += 1
-            state.discovered = True
-
-            if state.current_state is not None:
-                actions.append(
-                    PublishStateAction(
-                        address=state.address,
-                        state=state.current_state,
+            if self._optimistic_updates:
+                actions.extend(
+                    self._set_device_state(
+                        state=state,
+                        command=command,
+                        now=self._now(),
                         retain=True,
+                        clear_pending=False,
                     )
                 )
 
-        return actions
+            return actions
+
+    def mqtt_connected(self) -> list[BridgeAction]:
+        with self._lock:
+            was_connected = self._mqtt_connected
+            self._mqtt_connected = True
+            self._mqtt_generation += 1
+
+            if self._mqtt_has_connected and not was_connected:
+                self._statistics.mqtt_reconnects += 1
+
+            self._mqtt_has_connected = True
+            self._statistics.mqtt_connections += 1
+
+            actions: list[BridgeAction] = self._bridge_status_actions()
+
+            for state in self._devices.values():
+                state.discovered = False
+                actions.append(
+                    PublishDiscoveryAction(address=state.address)
+                )
+                self._statistics.discovery_messages += 1
+                state.discovered = True
+
+                if state.current_state is not None:
+                    actions.append(
+                        PublishStateAction(
+                            address=state.address,
+                            state=state.current_state,
+                            retain=True,
+                        )
+                    )
+
+            return actions
 
     def mqtt_disconnected(self) -> list[BridgeAction]:
-        if self._mqtt_connected:
-            self._statistics.mqtt_disconnects += 1
+        with self._lock:
+            if self._mqtt_connected:
+                self._statistics.mqtt_disconnects += 1
 
-        self._mqtt_connected = False
-        return [
-            PublishAvailabilityAction(online=False)
-        ]
+            self._mqtt_connected = False
+            return self._bridge_status_actions()
 
     def mochad_connected(self) -> list[BridgeAction]:
-        self._mochad_connected = True
-        self._statistics.mochad_reconnects += 1
-        actions: list[BridgeAction] = [
-            PublishAvailabilityAction(online=self._bridge_available()),
-            RequestStatusAction(),
-        ]
-        return actions
+        with self._lock:
+            self._mochad_connected = True
+            self._statistics.mochad_reconnects += 1
+            actions: list[BridgeAction] = self._bridge_status_actions()
+            actions.append(RequestStatusAction())
+            return actions
 
     def mochad_disconnected(self) -> list[BridgeAction]:
-        self._mochad_connected = False
+        with self._lock:
+            self._mochad_connected = False
 
-        for state in self._devices.values():
-            state.available = False
+            for state in self._devices.values():
+                state.available = False
 
-        return [
-            PublishAvailabilityAction(online=False)
-        ]
+            return self._bridge_status_actions()
 
     def snapshot(self) -> dict[str, DeviceState]:
-        return deepcopy(self._devices)
+        with self._lock:
+            return deepcopy(self._devices)
 
     def statistics(self) -> BridgeStatistics:
-        return deepcopy(self._statistics)
+        with self._lock:
+            return deepcopy(self._statistics)
 
     @property
     def mqtt_generation(self) -> int:
-        return self._mqtt_generation
+        with self._lock:
+            return self._mqtt_generation
 
     @property
     def available(self) -> bool:
-        return self._bridge_available()
+        with self._lock:
+            return self._bridge_available()
 
     def _apply_device_event(
         self,
@@ -388,6 +393,17 @@ class StateManager:
     def _bridge_available(self) -> bool:
         self._available = self._mqtt_connected and self._mochad_connected
         return self._available
+
+    def _bridge_status_actions(self) -> list[BridgeAction]:
+        online = self._bridge_available()
+        return [
+            PublishAvailabilityAction(online=online),
+            PublishStatusAction(
+                status="online" if online else "offline",
+                mqtt_connected=self._mqtt_connected,
+                mochad_connected=self._mochad_connected,
+            ),
+        ]
 
     @staticmethod
     def _authoritative_state(command: Command) -> Command:

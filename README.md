@@ -90,7 +90,6 @@ x10/A1/event
 x10/A1/attributes
 x10/bridge/availability
 x10/bridge/status
-x10/bridge/statistics
 ```
 
 Home Assistant discovery topics:

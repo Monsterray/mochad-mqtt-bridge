@@ -90,12 +90,6 @@ class Topics:
         return Topics.bridge_topic("status", base_topic)
 
     @staticmethod
-    def statistics(
-        base_topic: str = DEFAULT_BASE_TOPIC,
-    ) -> str:
-        return Topics.bridge_topic("statistics", base_topic)
-
-    @staticmethod
     def bridge_topic(
         suffix: str,
         base_topic: str = DEFAULT_BASE_TOPIC,
