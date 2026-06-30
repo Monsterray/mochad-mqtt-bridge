@@ -10,15 +10,7 @@ venv/
 .coverage
 dist/
 build/
-deprecated/
 *.egg-info/
 .DS_Store
-.git/
-.gitignore
+*.log
 docker-compose.override.yml
-CHANGELOG.md
-CONTRIBUTING.md
-LICENSE.md
-README.md
-RELEASE_CHECKLIST.md
-SECURITY.md

@@ -1,0 +1,39 @@
+---
+services:
+  mochad-mqtt-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: x10-mochad-mqtt-bridge:local
+    container_name: mochad-mqtt-bridge
+    restart: unless-stopped
+
+    environment:
+      MOCHAD_HOST: ${MOCHAD_HOST:-mochad}
+      MOCHAD_PORT: ${MOCHAD_PORT:-1099}
+      MQTT_HOST: ${MQTT_HOST:-mosquitto}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC:-x10}
+      MQTT_DISCOVERY_PREFIX: ${MQTT_DISCOVERY_PREFIX:-homeassistant}
+      X10_DEVICES: ${X10_DEVICES:-A1:Living Room Lamp:light}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BRIDGE_HEALTH_FILE: /tmp/mqtt-mochad-bridge.health
+      BRIDGE_HEALTH_MAX_AGE_SECONDS: ${BRIDGE_HEALTH_MAX_AGE_SECONDS:-30}
+      BRIDGE_DEBUG_WIRE: ${BRIDGE_DEBUG_WIRE:-false}
+
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    networks:
+      - mqtt
+
+networks:
+  mqtt:
+    name: ${MQTT_DOCKER_NETWORK:-mqtt}
+    external: true

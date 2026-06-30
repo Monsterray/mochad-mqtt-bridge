@@ -1,5 +1,19 @@
 FROM python:3.12-alpine
 
+ARG BUILD_DATE
+ARG VCS_REF
+ARG IMAGE_VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="mqtt-mochad-bridge"
+LABEL org.opencontainers.image.description="MQTT bridge for a running mochad X10 TCP service"
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.vendor="MQTT Mochad Bridge contributors"
+LABEL org.opencontainers.image.source="https://github.com/Monsterray/mochad-mqtt-bridge"
+LABEL org.opencontainers.image.documentation="https://github.com/Monsterray/mochad-mqtt-bridge"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
