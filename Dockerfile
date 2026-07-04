@@ -29,9 +29,13 @@ ENV MOCHAD_PORT=1099
 ENV MQTT_HOST=mosquitto
 ENV MQTT_PORT=1883
 ENV MQTT_BASE_TOPIC=x10
+ENV DISCOVERY_CLEANUP=false
+ENV DISCOVERY_REGISTRY_PATH=/config/discovery_registry.json
 ENV BRIDGE_HEALTH_FILE=/tmp/mqtt-mochad-bridge.health
 ENV BRIDGE_HEALTH_MAX_AGE_SECONDS=30
 ENV BRIDGE_DEBUG_WIRE=false
+
+VOLUME ["/config"]
 
 HEALTHCHECK --interval=30s \
             --timeout=5s \

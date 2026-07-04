@@ -64,6 +64,33 @@ class Topics:
         )
 
     @staticmethod
+    def bridge_command(
+        command: str,
+        base_topic: str = DEFAULT_BASE_TOPIC,
+    ) -> str:
+        return "/".join(
+            [
+                Topics._clean_segment(base_topic),
+                "bridge",
+                Topics._clean_segment(command),
+                "command",
+            ]
+        )
+
+    @staticmethod
+    def bridge_command_filter(
+        base_topic: str = DEFAULT_BASE_TOPIC,
+    ) -> str:
+        return "/".join(
+            [
+                Topics._clean_segment(base_topic),
+                "bridge",
+                "+",
+                "command",
+            ]
+        )
+
+    @staticmethod
     def event(
         device: DeviceConfig | str,
         base_topic: str = DEFAULT_BASE_TOPIC,
@@ -130,6 +157,21 @@ class Topics:
         )
 
     @staticmethod
+    def bridge_discovery(
+        component: str,
+        object_id: str,
+        discovery_prefix: str = DEFAULT_DISCOVERY_PREFIX,
+    ) -> str:
+        return "/".join(
+            [
+                Topics._clean_segment(discovery_prefix),
+                Topics._clean_segment(component),
+                Topics._clean_segment(object_id),
+                "config",
+            ]
+        )
+
+    @staticmethod
     def device_topic(
         device: DeviceConfig | str,
         suffix: str,
@@ -166,6 +208,30 @@ class Topics:
             )
 
         return parts[1]
+
+    @staticmethod
+    def parse_bridge_command_topic(
+        topic: str,
+        base_topic: str = DEFAULT_BASE_TOPIC,
+    ) -> str:
+        base = Topics._clean_segment(base_topic)
+        parts = topic.strip("/").split("/")
+
+        if len(parts) != 4:
+            raise TopicError(
+                f"Invalid bridge command topic '{topic}'."
+            )
+
+        if (
+            parts[0] != base
+            or parts[1] != "bridge"
+            or parts[3] != "command"
+        ):
+            raise TopicError(
+                f"Invalid bridge command topic '{topic}'."
+            )
+
+        return parts[2]
 
     @staticmethod
     def unique_id(device: DeviceConfig) -> str:

@@ -27,6 +27,7 @@ DEFAULT_MQTT_HOST = "mosquitto"
 DEFAULT_MQTT_PORT = 1883
 
 DEFAULT_DISCOVERY_PREFIX = "homeassistant"
+DEFAULT_DISCOVERY_REGISTRY_PATH = "/config/discovery_registry.json"
 DEFAULT_BASE_TOPIC = "x10"
 
 DEFAULT_LOG_LEVEL = "INFO"
@@ -79,6 +80,12 @@ class Config:
     discovery_enabled: bool = True
 
     discovery_republish: bool = True
+
+    discovery_cleanup: bool = False
+
+    discovery_registry_path: str = DEFAULT_DISCOVERY_REGISTRY_PATH
+
+    x10_housecodes: frozenset[str] | None = None
 
     debug_wire: bool = False
 
@@ -158,6 +165,7 @@ def _get_bool(
 
 
 DEVICE_RE = re.compile(r"^[A-P](?:[1-9]|1[0-6])$", re.IGNORECASE)
+HOUSE_CODE_RE = re.compile(r"^[A-P]$", re.IGNORECASE)
 
 
 def _normalize_address(address: str) -> str:
@@ -254,6 +262,68 @@ def parse_devices(raw: str | None) -> dict[str, DeviceConfig]:
     return devices
 
 
+def parse_housecodes(raw: str | None) -> frozenset[str] | None:
+    if not raw:
+        return None
+
+    value = raw.strip().upper()
+
+    if value in {"*", "A-P", "A...P"}:
+        return None
+
+    housecodes: set[str] = set()
+
+    for part in re.split(r"[\s,]+", value):
+        if not part:
+            continue
+
+        if "-" in part:
+            start, end = _parse_housecode_range(part)
+            housecodes.update(
+                chr(code)
+                for code in range(ord(start), ord(end) + 1)
+            )
+            continue
+
+        for character in part:
+            if not HOUSE_CODE_RE.fullmatch(character):
+                raise ConfigError(
+                    f"Invalid X10 house code '{character}' in X10_HOUSECODES."
+                )
+
+            housecodes.add(character)
+
+    if not housecodes:
+        return None
+
+    return frozenset(sorted(housecodes))
+
+
+def _parse_housecode_range(value: str) -> tuple[str, str]:
+    parts = value.split("-")
+
+    if len(parts) != 2:
+        raise ConfigError(
+            f"Invalid X10_HOUSECODES range '{value}'."
+        )
+
+    start = parts[0].strip()
+    end = parts[1].strip()
+
+    if (
+        len(start) != 1
+        or len(end) != 1
+        or not HOUSE_CODE_RE.fullmatch(start)
+        or not HOUSE_CODE_RE.fullmatch(end)
+        or start > end
+    ):
+        raise ConfigError(
+            f"Invalid X10_HOUSECODES range '{value}'."
+        )
+
+    return start, end
+
+
 ###############################################################################
 # Loader
 ###############################################################################
@@ -308,6 +378,20 @@ def load_config() -> Config:
 
         devices=parse_devices(
             _get_env("X10_DEVICES")
+        ),
+
+        discovery_cleanup=_get_bool(
+            "DISCOVERY_CLEANUP",
+            False,
+        ),
+
+        discovery_registry_path=_get_env(
+            "DISCOVERY_REGISTRY_PATH",
+            DEFAULT_DISCOVERY_REGISTRY_PATH,
+        ),
+
+        x10_housecodes=parse_housecodes(
+            _get_env("X10_HOUSECODES")
         ),
 
         debug_wire=_get_bool(

@@ -18,10 +18,12 @@ from typing import Iterable
 
 from config import Config
 from discovery import DiscoveryManager
+from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
 from models import (
     BridgeAction,
     Command,
     DeviceConfig,
+    DiscoveryMessage,
     LogUnknownEventAction,
     PublishAvailabilityAction,
     PublishDiscoveryAction,
@@ -33,7 +35,7 @@ from models import (
     SendMochadCommandAction,
 )
 from mochad_client import MochadClient
-from mqtt_client import MqttClient, MqttCommandMessage
+from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
 from protocol import ProtocolParser, encode_rf_command
 from state import StateManager
 
@@ -49,6 +51,9 @@ COMMAND_PAYLOADS = {
     "DIM": Command.DIM,
     "BRIGHT": Command.BRIGHT,
 }
+
+PRUNE_ENTITIES_COMMAND = "prune_entities"
+PRUNE_ENTITIES_PAYLOAD = "PRESS"
 
 
 @dataclass(slots=True)
@@ -74,7 +79,11 @@ class Bridge:
         started = time.monotonic()
         _LOG.info("Initializing bridge")
         self.config = config
-        self.devices = dict(config.devices)
+        self.devices = {
+            address: device
+            for address, device in config.devices.items()
+            if self._address_allowed_by_config(address)
+        }
         _LOG.info(
             "Loaded %d configured X10 device(s)",
             len(self.devices),
@@ -84,10 +93,14 @@ class Bridge:
         self.state = state or StateManager(
             devices=self.devices,
             optimistic_updates=config.optimistic_updates,
+            allowed_housecodes=config.x10_housecodes,
         )
         _LOG.info(
-            "State manager ready optimistic_updates=%s",
+            "State manager ready optimistic_updates=%s housecodes=%s",
             config.optimistic_updates,
+            ",".join(sorted(config.x10_housecodes))
+            if config.x10_housecodes is not None
+            else "all",
         )
         self.discovery = discovery or DiscoveryManager(
             discovery_prefix=config.mqtt_discovery_prefix,
@@ -121,6 +134,14 @@ class Bridge:
                 port=config.mochad_port,
                 debug_wire=config.debug_wire,
             ),
+        )
+        self.discovery_registry = DiscoveryRegistry(
+            config.discovery_registry_path
+        )
+        _LOG.info(
+            "Discovery cleanup enabled=%s registry_path=%s",
+            config.discovery_cleanup,
+            config.discovery_registry_path,
         )
         if config.debug_wire:
             _LOG.info("Wire debug logging enabled")
@@ -330,6 +351,9 @@ class Bridge:
     def _wire_callbacks(self) -> None:
         _LOG.info("Wiring bridge callbacks")
         self.clients.mqtt.set_command_callback(self._on_mqtt_command)
+        self.clients.mqtt.set_bridge_command_callback(
+            self._on_mqtt_bridge_command
+        )
         self.clients.mqtt.set_connect_callback(self._on_mqtt_connected)
         self.clients.mqtt.set_disconnect_callback(self._on_mqtt_disconnected)
         self.clients.mochad.set_line_callback(self._on_mochad_line)
@@ -381,9 +405,40 @@ class Bridge:
             )
         )
 
+    def _on_mqtt_bridge_command(
+        self,
+        message: MqttBridgeCommandMessage,
+    ) -> None:
+        _LOG.info(
+            "MQTT bridge command received command=%s payload=%s topic=%s",
+            message.command,
+            message.payload,
+            message.topic,
+        )
+
+        if message.command != PRUNE_ENTITIES_COMMAND:
+            _LOG.warning(
+                "Ignoring unsupported MQTT bridge command %r on %s",
+                message.command,
+                message.topic,
+            )
+            return
+
+        if message.payload.strip().upper() != PRUNE_ENTITIES_PAYLOAD:
+            _LOG.warning(
+                "Ignoring unsupported MQTT bridge command payload %r on %s",
+                message.payload,
+                message.topic,
+            )
+            return
+
+        self._run_discovery_cleanup(force=True)
+
     def _on_mqtt_connected(self) -> None:
         _LOG.info("MQTT connected")
         self.execute_actions(self.state.mqtt_connected())
+        self._publish_bridge_diagnostic_discovery()
+        self._run_discovery_cleanup(force=False)
         self._write_health(
             "running" if self.state.available else "starting"
         )
@@ -462,6 +517,114 @@ class Bridge:
             )
             self.devices[address] = device
             return device
+
+    def _address_allowed_by_config(
+        self,
+        address: str,
+    ) -> bool:
+        if self.config.x10_housecodes is None:
+            return True
+
+        address = address.strip().upper()
+
+        if not address:
+            return False
+
+        return address[0] in self.config.x10_housecodes
+
+    def _publish_bridge_diagnostic_discovery(self) -> None:
+        for message in self.discovery.bridge_diagnostic_messages():
+            _LOG.info(
+                "MQTT publish bridge discovery topic=%s retain=%s",
+                message.topic,
+                message.retain,
+            )
+            self.clients.mqtt.publish_discovery(message)
+
+    def _run_discovery_cleanup(
+        self,
+        force: bool,
+    ) -> None:
+        desired_topics = self._desired_discovery_topics()
+
+        if not force and not self.config.discovery_cleanup:
+            self._save_discovery_registry(desired_topics)
+            _LOG.info(
+                "Discovery registry updated desired=%d cleanup_enabled=%s registry=%s",
+                len(desired_topics),
+                self.config.discovery_cleanup,
+                self.config.discovery_registry_path,
+            )
+            return
+
+        try:
+            previous_topics = self.discovery_registry.load()
+        except DiscoveryRegistryError as exc:
+            _LOG.warning(
+                "Discovery cleanup skipped: %s",
+                exc,
+            )
+            return
+
+        stale_topics = sorted(previous_topics - desired_topics)
+
+        for topic in stale_topics:
+            _LOG.info(
+                "MQTT clear stale discovery topic=%s",
+                topic,
+            )
+            self.clients.mqtt.publish_discovery(
+                self._empty_discovery_message(topic)
+            )
+
+        if not self._save_discovery_registry(desired_topics):
+            return
+
+        _LOG.info(
+            "Discovery cleanup complete desired=%d stale=%d registry=%s",
+            len(desired_topics),
+            len(stale_topics),
+            self.config.discovery_registry_path,
+        )
+
+    def _desired_discovery_topics(self) -> set[str]:
+        messages = []
+
+        for device in self.devices.values():
+            messages.extend(
+                self.discovery.discovery_messages(device)
+            )
+
+        messages.extend(
+            self.discovery.bridge_diagnostic_messages()
+        )
+
+        return {message.topic for message in messages}
+
+    def _save_discovery_registry(
+        self,
+        desired_topics: set[str],
+    ) -> bool:
+        try:
+            self.discovery_registry.save(desired_topics)
+        except DiscoveryRegistryError as exc:
+            _LOG.warning(
+                "Discovery registry save failed: %s",
+                exc,
+            )
+            return False
+
+        return True
+
+    @staticmethod
+    def _empty_discovery_message(
+        topic: str,
+    ) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=topic,
+            payload="",
+            retain=True,
+        )
 
     @staticmethod
     def _parse_command_payload(

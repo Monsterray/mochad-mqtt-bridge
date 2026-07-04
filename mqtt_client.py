@@ -33,6 +33,15 @@ class MqttCommandMessage:
     topic: str
 
 
+@dataclass(slots=True, frozen=True)
+class MqttBridgeCommandMessage:
+    """Inbound MQTT bridge command message."""
+
+    command: str
+    payload: str
+    topic: str
+
+
 class PahoClientProtocol(Protocol):
     on_connect: Callable | None
     on_disconnect: Callable | None
@@ -90,6 +99,7 @@ class PahoClientProtocol(Protocol):
 
 ClientFactory = Callable[[str], PahoClientProtocol]
 CommandCallback = Callable[[MqttCommandMessage], None]
+BridgeCommandCallback = Callable[[MqttBridgeCommandMessage], None]
 ConnectionCallback = Callable[[], None]
 DisconnectCallback = Callable[[int | None], None]
 
@@ -123,6 +133,7 @@ class MqttClient:
         factory = client_factory or self._default_client_factory
         self._client = factory(client_id)
         self._command_callback: CommandCallback | None = None
+        self._bridge_command_callback: BridgeCommandCallback | None = None
         self._connect_callback: ConnectionCallback | None = None
         self._disconnect_callback: DisconnectCallback | None = None
         self._connected = False
@@ -138,6 +149,12 @@ class MqttClient:
         callback: CommandCallback,
     ) -> None:
         self._command_callback = callback
+
+    def set_bridge_command_callback(
+        self,
+        callback: BridgeCommandCallback,
+    ) -> None:
+        self._bridge_command_callback = callback
 
     def set_connect_callback(
         self,
@@ -172,6 +189,10 @@ class MqttClient:
     def subscribe_commands(self) -> None:
         self._client.subscribe(
             Topics.command_filter(self.base_topic),
+            qos=0,
+        )
+        self._client.subscribe(
+            Topics.bridge_command_filter(self.base_topic),
             qos=0,
         )
 
@@ -358,27 +379,40 @@ class MqttClient:
             len(message.payload),
         )
 
-        try:
-            device = Topics.parse_command_topic(
-                message.topic,
-                base_topic=self.base_topic,
-            )
-        except ValueError:
-            _LOG.warning(
-                "Ignoring MQTT message on unexpected topic %s",
-                message.topic,
-            )
-            return
-
         payload = message.payload.decode(
             "utf-8",
             errors="replace",
         ).strip()
+
+        if self._handle_device_command_message(message.topic, payload):
+            return
+
+        if self._handle_bridge_command_message(message.topic, payload):
+            return
+
+        _LOG.warning(
+            "Ignoring MQTT message on unexpected topic %s",
+            message.topic,
+        )
+
+    def _handle_device_command_message(
+        self,
+        topic: str,
+        payload: str,
+    ) -> bool:
+        try:
+            device = Topics.parse_command_topic(
+                topic,
+                base_topic=self.base_topic,
+            )
+        except ValueError:
+            return False
+
         _LOG.debug(
             "MQTT command message parsed device=%s payload=%s topic=%s",
             device,
             payload,
-            message.topic,
+            topic,
         )
 
         if self._command_callback:
@@ -387,14 +421,53 @@ class MqttClient:
                     MqttCommandMessage(
                         device=device,
                         payload=payload,
-                        topic=message.topic,
+                        topic=topic,
                     )
                 )
             except Exception:
                 _LOG.exception(
                     "MQTT command callback failed topic=%s",
-                    message.topic,
+                    topic,
                 )
+
+        return True
+
+    def _handle_bridge_command_message(
+        self,
+        topic: str,
+        payload: str,
+    ) -> bool:
+        try:
+            command = Topics.parse_bridge_command_topic(
+                topic,
+                base_topic=self.base_topic,
+            )
+        except ValueError:
+            return False
+
+        _LOG.debug(
+            "MQTT bridge command message parsed command=%s payload=%s topic=%s",
+            command,
+            payload,
+            topic,
+        )
+
+        if self._bridge_command_callback:
+            try:
+                self._bridge_command_callback(
+                    MqttBridgeCommandMessage(
+                        command=command,
+                        payload=payload,
+                        topic=topic,
+                    )
+                )
+            except Exception:
+                _LOG.exception(
+                    "MQTT bridge command callback failed topic=%s",
+                    topic,
+                )
+
+        return True
 
     @staticmethod
     def _serialize_payload(payload: Payload) -> str:

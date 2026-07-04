@@ -65,7 +65,10 @@ MQTT_USERNAME
 MQTT_PASSWORD
 MQTT_BASE_TOPIC
 MQTT_DISCOVERY_PREFIX
+DISCOVERY_CLEANUP
+DISCOVERY_REGISTRY_PATH
 X10_DEVICES
+X10_HOUSECODES
 LOG_LEVEL
 BRIDGE_DEBUG_WIRE
 ```
@@ -79,6 +82,10 @@ Example devices:
 X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
 ```
 
+Set `X10_HOUSECODES` to restrict which X10 house codes the bridge accepts.
+Unset means all house codes. Examples: `A`, `ACF`, `A,C,F`, or `A-D`.
+Filtered house codes do not create device state or Home Assistant discovery.
+
 ## MQTT Topics
 
 Device topics are based on stable X10 addresses:
@@ -90,6 +97,7 @@ x10/A1/event
 x10/A1/attributes
 x10/bridge/availability
 x10/bridge/status
+x10/bridge/prune_entities/command
 ```
 
 Home Assistant discovery topics:
@@ -97,10 +105,21 @@ Home Assistant discovery topics:
 ```text
 homeassistant/light/x10_A1/config
 homeassistant/switch/x10_A2/config
+homeassistant/sensor/mqtt_mochad_bridge_status/config
+homeassistant/binary_sensor/mqtt_mochad_bridge_mqtt_connected/config
+homeassistant/binary_sensor/mqtt_mochad_bridge_mochad_connected/config
+homeassistant/button/mqtt_mochad_bridge_prune_entities/config
 ```
 
 Friendly names only affect Home Assistant display names. They never affect
 MQTT topic identity or Home Assistant `unique_id`.
+
+The bridge publishes a retained JSON status document to `x10/bridge/status`.
+Home Assistant diagnostics are discovered from that document. The retained
+registry at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set
+`DISCOVERY_CLEANUP=true` to also prune stale Home Assistant MQTT discovery
+topics. The diagnostics button uses `x10/bridge/prune_entities/command` to run
+the same prune action on demand.
 
 ## Debugging
 

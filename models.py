@@ -299,7 +299,7 @@ class DiscoveryMessage:
 
     topic: str
 
-    payload: dict
+    payload: dict | str
 
     retain: bool = True
 

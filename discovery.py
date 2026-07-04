@@ -60,6 +60,27 @@ class DiscoveryManager:
 
         return [message]
 
+    def bridge_diagnostic_messages(self) -> list[DiscoveryMessage]:
+        messages = [
+            self._bridge_status_sensor_message(),
+            self._bridge_connectivity_sensor_message(
+                object_id="mqtt_mochad_bridge_mqtt_connected",
+                name="MQTT Connected",
+                value_key="mqtt_connected",
+            ),
+            self._bridge_connectivity_sensor_message(
+                object_id="mqtt_mochad_bridge_mochad_connected",
+                name="Mochad Connected",
+                value_key="mochad_connected",
+            ),
+            self._bridge_prune_button_message(),
+        ]
+
+        for message in messages:
+            self._validate_bridge_message(message)
+
+        return messages
+
     def _payload(
         self,
         device: DeviceConfig,
@@ -85,6 +106,91 @@ class DiscoveryManager:
             "device": self._device_block(),
             "origin": self._origin_block(),
         }
+
+    def _bridge_status_sensor_message(self) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=Topics.bridge_discovery(
+                "sensor",
+                "mqtt_mochad_bridge_status",
+                discovery_prefix=self.discovery_prefix,
+            ),
+            payload={
+                "name": "Bridge Status",
+                "unique_id": "mqtt_mochad_bridge_status",
+                "state_topic": Topics.status(
+                    base_topic=self.base_topic,
+                ),
+                "value_template": "{{ value_json.status }}",
+                "availability_topic": Topics.availability(
+                    base_topic=self.base_topic,
+                ),
+                "entity_category": "diagnostic",
+                "device": self._device_block(),
+                "origin": self._origin_block(),
+            },
+            retain=True,
+        )
+
+    def _bridge_connectivity_sensor_message(
+        self,
+        object_id: str,
+        name: str,
+        value_key: str,
+    ) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=Topics.bridge_discovery(
+                "binary_sensor",
+                object_id,
+                discovery_prefix=self.discovery_prefix,
+            ),
+            payload={
+                "name": name,
+                "unique_id": object_id,
+                "state_topic": Topics.status(
+                    base_topic=self.base_topic,
+                ),
+                "value_template": (
+                    "{{ 'ON' if value_json."
+                    + value_key
+                    + " else 'OFF' }}"
+                ),
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device_class": "connectivity",
+                "availability_topic": Topics.availability(
+                    base_topic=self.base_topic,
+                ),
+                "entity_category": "diagnostic",
+                "device": self._device_block(),
+                "origin": self._origin_block(),
+            },
+            retain=True,
+        )
+
+    def _bridge_prune_button_message(self) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=Topics.bridge_discovery(
+                "button",
+                "mqtt_mochad_bridge_prune_entities",
+                discovery_prefix=self.discovery_prefix,
+            ),
+            payload={
+                "name": "Prune Home Assistant Entities",
+                "unique_id": "mqtt_mochad_bridge_prune_entities",
+                "command_topic": Topics.bridge_command(
+                    "prune_entities",
+                    base_topic=self.base_topic,
+                ),
+                "payload_press": "PRESS",
+                "availability_topic": Topics.availability(
+                    base_topic=self.base_topic,
+                ),
+                "entity_category": "diagnostic",
+                "device": self._device_block(),
+                "origin": self._origin_block(),
+            },
+            retain=True,
+        )
 
     def _device_block(self) -> dict:
         return {
@@ -180,3 +286,33 @@ class DiscoveryManager:
                 raise DiscoveryError(
                     f"Discovery device block missing {key}."
                 )
+
+    def _validate_bridge_message(
+        self,
+        message: DiscoveryMessage,
+    ) -> None:
+        if not message.topic:
+            raise DiscoveryError("Bridge discovery topic cannot be empty.")
+
+        if not isinstance(message.payload, dict):
+            raise DiscoveryError("Bridge discovery payload must be a dict.")
+
+        for key in {
+            "name",
+            "unique_id",
+            "availability_topic",
+            "device",
+            "origin",
+        }:
+            if key not in message.payload:
+                raise DiscoveryError(
+                    f"Bridge discovery payload missing {key}."
+                )
+
+        if (
+            "state_topic" not in message.payload
+            and "command_topic" not in message.payload
+        ):
+            raise DiscoveryError(
+                "Bridge discovery payload must include a state or command topic."
+            )

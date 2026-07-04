@@ -25,3 +25,28 @@ docker compose exec mochad-mqtt-bridge python /app/tools/mochad_status.py --host
 ```sh
 docker compose exec mochad-mqtt-bridge python /app/tools/watch_mochad.py --host mochad --port 1099
 ```
+
+## Clean Home Assistant MQTT discovery
+
+Dry-run first:
+
+```sh
+docker compose exec mochad-mqtt-bridge python /app/tools/ha_mqtt_discovery_cleanup.py --host mosquitto --prefix homeassistant --dry-run
+```
+
+Apply cleanup:
+
+```sh
+docker compose exec mochad-mqtt-bridge python /app/tools/ha_mqtt_discovery_cleanup.py --host mosquitto --username '<username>' --password 'PASSWORD' --prefix homeassistant --apply
+```
+
+Optional aggressive mode:
+
+```sh
+docker compose exec mochad-mqtt-bridge python /app/tools/ha_mqtt_discovery_cleanup.py --host mosquitto --username '<username>' --password 'PASSWORD' --apply --match-topic 'homeassistant/+/x10_+/config'
+```
+
+The cleanup helper reads retained discovery configs from `homeassistant/#` and
+clears only configs that look owned by this bridge. It does not call the Home
+Assistant API. With `--match-topic`, it can also clear retained discovery
+configs matching an explicit topic pattern.

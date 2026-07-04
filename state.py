@@ -65,6 +65,7 @@ class StateManager:
         self,
         devices: Iterable[DeviceConfig] | dict[str, DeviceConfig] | None = None,
         optimistic_updates: bool = True,
+        allowed_housecodes: Iterable[str] | None = None,
     ) -> None:
         self._lock = RLock()
         self._devices: dict[str, DeviceState] = {}
@@ -75,12 +76,16 @@ class StateManager:
         self._available = False
         self._mqtt_generation = 0
         self._optimistic_updates = optimistic_updates
+        self._allowed_housecodes = self._normalize_housecodes(
+            allowed_housecodes
+        )
 
         if isinstance(devices, dict):
             devices = devices.values()
 
         for device in devices or ():
-            self._ensure_device(device.address)
+            if self._address_allowed(device.address):
+                self._ensure_device(device.address)
 
     def apply(
         self,
@@ -121,6 +126,9 @@ class StateManager:
         """
 
         with self._lock:
+            if not self._address_allowed(address):
+                return []
+
             state = self._ensure_device(address)
             state.pending_command = command
             self._statistics.commands_sent += 1
@@ -226,6 +234,9 @@ class StateManager:
         self,
         event: DeviceEvent,
     ) -> list[BridgeAction]:
+        if not self._address_allowed(event.address):
+            return []
+
         self._statistics.events_received += 1
 
         state = self._ensure_device(event.address)
@@ -256,6 +267,9 @@ class StateManager:
         self,
         event: HouseEvent,
     ) -> list[BridgeAction]:
+        if not self._house_allowed(event.house):
+            return []
+
         self._statistics.events_received += 1
 
         if event.command not in {
@@ -301,6 +315,9 @@ class StateManager:
         actions: list[BridgeAction] = []
 
         for address, command in snapshot.devices.items():
+            if not self._address_allowed(address):
+                continue
+
             state = self._ensure_device(address)
             state.available = True
             state.last_seen = now
@@ -373,6 +390,44 @@ class StateManager:
             state = DeviceState(address=address)
             self._devices[address] = state
             return state
+
+    def _address_allowed(
+        self,
+        address: str,
+    ) -> bool:
+        address = address.strip().upper()
+
+        if not address:
+            return False
+
+        return self._house_allowed(address[0])
+
+    def _house_allowed(
+        self,
+        house: str,
+    ) -> bool:
+        if self._allowed_housecodes is None:
+            return True
+
+        return house.strip().upper() in self._allowed_housecodes
+
+    @staticmethod
+    def _normalize_housecodes(
+        housecodes: Iterable[str] | None,
+    ) -> frozenset[str] | None:
+        if housecodes is None:
+            return None
+
+        normalized = frozenset(
+            code.strip().upper()
+            for code in housecodes
+            if code.strip()
+        )
+
+        if not normalized:
+            return None
+
+        return normalized
 
     def _devices_for_house(self, house: str) -> list[DeviceState]:
         house = house.strip().upper()
