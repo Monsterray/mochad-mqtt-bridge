@@ -21,11 +21,13 @@ from discovery import DiscoveryManager
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
 from models import (
     BridgeAction,
+    BridgeCommand,
     Command,
     DeviceConfig,
     DiscoveryMessage,
     LogUnknownEventAction,
     PublishAvailabilityAction,
+    PublishBridgeResponseAction,
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
@@ -52,8 +54,10 @@ COMMAND_PAYLOADS = {
     "BRIGHT": Command.BRIGHT,
 }
 
-PRUNE_ENTITIES_COMMAND = "prune_entities"
-PRUNE_ENTITIES_PAYLOAD = "PRESS"
+BRIDGE_COMMAND_ALIASES = {
+    "PRUNE_ENTITIES": BridgeCommand.PRUNE_DISCOVERY,
+    "PRUNE": BridgeCommand.PRUNE_DISCOVERY,
+}
 
 
 @dataclass(slots=True)
@@ -105,11 +109,13 @@ class Bridge:
         self.discovery = discovery or DiscoveryManager(
             discovery_prefix=config.mqtt_discovery_prefix,
             base_topic=config.mqtt_base_topic,
+            enable_maintenance_buttons=config.enable_maintenance_buttons,
         )
         _LOG.info(
-            "Discovery manager ready prefix=%s base_topic=%s",
+            "Discovery manager ready prefix=%s base_topic=%s maintenance_buttons=%s",
             config.mqtt_discovery_prefix,
             config.mqtt_base_topic,
+            config.enable_maintenance_buttons,
         )
         _LOG.info(
             "Configuring transports mqtt=%s:%s mochad=%s:%s",
@@ -315,6 +321,27 @@ class Bridge:
             )
             return
 
+        if isinstance(action, PublishBridgeResponseAction):
+            payload = {
+                "command": action.command.name
+                if action.command is not None
+                else None,
+                "success": action.success,
+                "message": action.message,
+                "timestamp": time.time(),
+            }
+            payload.update(action.payload)
+            _LOG.info(
+                "MQTT publish bridge response command=%s success=%s",
+                payload["command"],
+                action.success,
+            )
+            self.clients.mqtt.publish_bridge_response(
+                payload,
+                retain=action.retain,
+            )
+            return
+
         if isinstance(action, SendMochadCommandAction):
             self.clients.mochad.send_line(action.command)
             return
@@ -410,29 +437,147 @@ class Bridge:
         message: MqttBridgeCommandMessage,
     ) -> None:
         _LOG.info(
-            "MQTT bridge command received command=%s payload=%s topic=%s",
-            message.command,
+            "MQTT bridge command received payload=%s topic=%s",
             message.payload,
             message.topic,
         )
+        command = self._parse_bridge_command_payload(message.payload)
+        _LOG.debug(
+            "MQTT bridge payload parsed payload=%s command=%s",
+            message.payload,
+            command.name if command is not None else None,
+        )
 
-        if message.command != PRUNE_ENTITIES_COMMAND:
-            _LOG.warning(
-                "Ignoring unsupported MQTT bridge command %r on %s",
-                message.command,
-                message.topic,
+        if command is None:
+            warning = (
+                f"Ignoring unsupported MQTT bridge command payload "
+                f"{message.payload!r} on {message.topic}"
+            )
+            _LOG.warning(warning)
+            self.execute_action(
+                self._bridge_response(
+                    command=None,
+                    success=False,
+                    message=warning,
+                )
             )
             return
 
-        if message.payload.strip().upper() != PRUNE_ENTITIES_PAYLOAD:
-            _LOG.warning(
-                "Ignoring unsupported MQTT bridge command payload %r on %s",
-                message.payload,
-                message.topic,
+        self._handle_bridge_command(command)
+
+    def _handle_bridge_command(
+        self,
+        command: BridgeCommand,
+    ) -> None:
+        if command in {
+            BridgeCommand.PRUNE_DISCOVERY,
+            BridgeCommand.RESET_DISCOVERY,
+        } and not self.config.enable_maintenance_buttons:
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=False,
+                    message=(
+                        "Maintenance command disabled; set "
+                        "ENABLE_MAINTENANCE_BUTTONS=true to enable it."
+                    ),
+                )
             )
             return
 
-        self._run_discovery_cleanup(force=True)
+        if command == BridgeCommand.PING:
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=True,
+                    message="pong",
+                )
+            )
+            return
+
+        if command == BridgeCommand.STATUS:
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=True,
+                    message="Bridge status returned.",
+                    payload=self._bridge_status_payload(),
+                )
+            )
+            return
+
+        if command == BridgeCommand.SYNC:
+            if not self.clients.mochad.connected:
+                self.execute_action(
+                    self._bridge_response(
+                        command=command,
+                        success=False,
+                        message="Cannot sync because mochad is not connected.",
+                    )
+                )
+                return
+
+            try:
+                self.execute_action(RequestStatusAction())
+            except (ConnectionError, OSError) as exc:
+                self.execute_action(
+                    self._bridge_response(
+                        command=command,
+                        success=False,
+                        message=f"Status sync request failed: {exc}",
+                    )
+                )
+                return
+
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=True,
+                    message="Status sync requested from mochad.",
+                )
+            )
+            return
+
+        if command == BridgeCommand.REDISCOVER:
+            published = self._publish_current_discovery()
+            self._save_discovery_registry(self._desired_discovery_topics())
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=True,
+                    message="Discovery messages republished.",
+                    payload={"published": published},
+                )
+            )
+            return
+
+        if command == BridgeCommand.PRUNE_DISCOVERY:
+            result = self._run_discovery_cleanup(force=True)
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=result.get("success", False),
+                    message=result.get("message", "Discovery prune completed."),
+                    payload=result,
+                )
+            )
+            return
+
+        if command == BridgeCommand.RESET_DISCOVERY:
+            result = self._reset_discovery()
+            self.execute_action(
+                self._bridge_response(
+                    command=command,
+                    success=result.get("success", False),
+                    message=result.get("message", "Discovery reset completed."),
+                    payload=result,
+                )
+            )
+            return
+
+        raise TypeError(
+            f"Unhandled bridge command {command.name}."
+        )
 
     def _on_mqtt_connected(self) -> None:
         _LOG.info("MQTT connected")
@@ -541,21 +686,49 @@ class Bridge:
             )
             self.clients.mqtt.publish_discovery(message)
 
+    def _publish_current_discovery(self) -> int:
+        messages: list[DiscoveryMessage] = []
+
+        for device in self.devices.values():
+            messages.extend(
+                self.discovery.discovery_messages(device)
+            )
+
+        messages.extend(
+            self.discovery.bridge_diagnostic_messages()
+        )
+
+        for message in messages:
+            _LOG.info(
+                "MQTT publish discovery topic=%s retain=%s",
+                message.topic,
+                message.retain,
+            )
+            self.clients.mqtt.publish_discovery(message)
+
+        return len(messages)
+
     def _run_discovery_cleanup(
         self,
         force: bool,
-    ) -> None:
+    ) -> dict:
         desired_topics = self._desired_discovery_topics()
 
         if not force and not self.config.discovery_cleanup:
-            self._save_discovery_registry(desired_topics)
+            saved = self._save_discovery_registry(desired_topics)
             _LOG.info(
                 "Discovery registry updated desired=%d cleanup_enabled=%s registry=%s",
                 len(desired_topics),
                 self.config.discovery_cleanup,
                 self.config.discovery_registry_path,
             )
-            return
+            return {
+                "success": saved,
+                "message": "Discovery registry updated.",
+                "desired": len(desired_topics),
+                "stale": 0,
+                "cleanup_enabled": self.config.discovery_cleanup,
+            }
 
         try:
             previous_topics = self.discovery_registry.load()
@@ -564,7 +737,13 @@ class Bridge:
                 "Discovery cleanup skipped: %s",
                 exc,
             )
-            return
+            return {
+                "success": False,
+                "message": f"Discovery cleanup skipped: {exc}",
+                "desired": len(desired_topics),
+                "stale": 0,
+                "cleanup_enabled": self.config.discovery_cleanup,
+            }
 
         stale_topics = sorted(previous_topics - desired_topics)
 
@@ -578,7 +757,13 @@ class Bridge:
             )
 
         if not self._save_discovery_registry(desired_topics):
-            return
+            return {
+                "success": False,
+                "message": "Discovery cleanup ran but registry save failed.",
+                "desired": len(desired_topics),
+                "stale": len(stale_topics),
+                "cleanup_enabled": self.config.discovery_cleanup,
+            }
 
         _LOG.info(
             "Discovery cleanup complete desired=%d stale=%d registry=%s",
@@ -586,6 +771,46 @@ class Bridge:
             len(stale_topics),
             self.config.discovery_registry_path,
         )
+        return {
+            "success": True,
+            "message": "Discovery cleanup complete.",
+            "desired": len(desired_topics),
+            "stale": len(stale_topics),
+            "cleanup_enabled": self.config.discovery_cleanup,
+        }
+
+    def _reset_discovery(self) -> dict:
+        desired_topics = self._desired_discovery_topics()
+
+        try:
+            registry_topics = self.discovery_registry.load()
+        except DiscoveryRegistryError as exc:
+            _LOG.warning(
+                "Discovery registry load failed before reset: %s",
+                exc,
+            )
+            registry_topics = set()
+
+        topics_to_clear = sorted(desired_topics | registry_topics)
+
+        for topic in topics_to_clear:
+            _LOG.info(
+                "MQTT clear discovery topic=%s",
+                topic,
+            )
+            self.clients.mqtt.publish_discovery(
+                self._empty_discovery_message(topic)
+            )
+
+        saved = self._save_discovery_registry(set())
+
+        return {
+            "success": saved,
+            "message": "Discovery reset complete."
+            if saved
+            else "Discovery reset ran but registry save failed.",
+            "cleared": len(topics_to_clear),
+        }
 
     def _desired_discovery_topics(self) -> set[str]:
         messages = []
@@ -626,6 +851,37 @@ class Bridge:
             retain=True,
         )
 
+    def _bridge_status_payload(self) -> dict:
+        snapshot = self.state.snapshot()
+        statistics = self.state.statistics()
+
+        return {
+            "available": self.state.available,
+            "mqtt_connected": self.clients.mqtt.connected,
+            "mochad_connected": self.clients.mochad.connected,
+            "configured_devices": len(self.devices),
+            "known_devices": len(snapshot),
+            "mqtt_connections": statistics.mqtt_connections,
+            "mqtt_disconnects": statistics.mqtt_disconnects,
+            "mqtt_reconnects": statistics.mqtt_reconnects,
+            "mochad_reconnects": statistics.mochad_reconnects,
+            "status_syncs": statistics.status_syncs,
+        }
+
+    @staticmethod
+    def _bridge_response(
+        command: BridgeCommand | None,
+        success: bool,
+        message: str,
+        payload: dict | None = None,
+    ) -> PublishBridgeResponseAction:
+        return PublishBridgeResponseAction(
+            command=command,
+            success=success,
+            message=message,
+            payload=payload or {},
+        )
+
     @staticmethod
     def _parse_command_payload(
         payload: str,
@@ -633,3 +889,19 @@ class Bridge:
         return COMMAND_PAYLOADS.get(
             payload.strip().upper()
         )
+
+    @staticmethod
+    def _parse_bridge_command_payload(
+        payload: str,
+    ) -> BridgeCommand | None:
+        normalized = payload.strip().upper()
+
+        if not normalized:
+            return None
+
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+
+        try:
+            return BridgeCommand[normalized]
+        except KeyError:
+            return BRIDGE_COMMAND_ALIASES.get(normalized)

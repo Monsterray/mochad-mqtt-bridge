@@ -67,6 +67,7 @@ MQTT_BASE_TOPIC
 MQTT_DISCOVERY_PREFIX
 DISCOVERY_CLEANUP
 DISCOVERY_REGISTRY_PATH
+ENABLE_MAINTENANCE_BUTTONS
 X10_DEVICES
 X10_HOUSECODES
 LOG_LEVEL
@@ -97,7 +98,8 @@ x10/A1/event
 x10/A1/attributes
 x10/bridge/availability
 x10/bridge/status
-x10/bridge/prune_entities/command
+x10/bridge/command
+x10/bridge/response
 ```
 
 Home Assistant discovery topics:
@@ -108,7 +110,8 @@ homeassistant/switch/x10_A2/config
 homeassistant/sensor/mqtt_mochad_bridge_status/config
 homeassistant/binary_sensor/mqtt_mochad_bridge_mqtt_connected/config
 homeassistant/binary_sensor/mqtt_mochad_bridge_mochad_connected/config
-homeassistant/button/mqtt_mochad_bridge_prune_entities/config
+homeassistant/button/mqtt_mochad_bridge_sync/config
+homeassistant/button/mqtt_mochad_bridge_rediscover/config
 ```
 
 Friendly names only affect Home Assistant display names. They never affect
@@ -118,8 +121,24 @@ The bridge publishes a retained JSON status document to `x10/bridge/status`.
 Home Assistant diagnostics are discovered from that document. The retained
 registry at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set
 `DISCOVERY_CLEANUP=true` to also prune stale Home Assistant MQTT discovery
-topics. The diagnostics button uses `x10/bridge/prune_entities/command` to run
-the same prune action on demand.
+topics on startup.
+
+Bridge control commands are published to `x10/bridge/command` with one of
+these payloads:
+
+```text
+PING
+STATUS
+SYNC
+REDISCOVER
+PRUNE_DISCOVERY
+RESET_DISCOVERY
+```
+
+Command results are published to `x10/bridge/response`. Home Assistant buttons
+for `SYNC` and `REDISCOVER` are discovered by default. Set
+`ENABLE_MAINTENANCE_BUTTONS=true` to enable destructive maintenance commands
+and Home Assistant buttons for `PRUNE_DISCOVERY` and `RESET_DISCOVERY`.
 
 ## Debugging
 

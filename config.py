@@ -85,6 +85,8 @@ class Config:
 
     discovery_registry_path: str = DEFAULT_DISCOVERY_REGISTRY_PATH
 
+    enable_maintenance_buttons: bool = False
+
     x10_housecodes: frozenset[str] | None = None
 
     debug_wire: bool = False
@@ -388,6 +390,11 @@ def load_config() -> Config:
         discovery_registry_path=_get_env(
             "DISCOVERY_REGISTRY_PATH",
             DEFAULT_DISCOVERY_REGISTRY_PATH,
+        ),
+
+        enable_maintenance_buttons=_get_bool(
+            "ENABLE_MAINTENANCE_BUTTONS",
+            False,
         ),
 
         x10_housecodes=parse_housecodes(

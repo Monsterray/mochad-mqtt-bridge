@@ -65,14 +65,12 @@ class Topics:
 
     @staticmethod
     def bridge_command(
-        command: str,
         base_topic: str = DEFAULT_BASE_TOPIC,
     ) -> str:
         return "/".join(
             [
                 Topics._clean_segment(base_topic),
                 "bridge",
-                Topics._clean_segment(command),
                 "command",
             ]
         )
@@ -85,10 +83,15 @@ class Topics:
             [
                 Topics._clean_segment(base_topic),
                 "bridge",
-                "+",
                 "command",
             ]
         )
+
+    @staticmethod
+    def bridge_response(
+        base_topic: str = DEFAULT_BASE_TOPIC,
+    ) -> str:
+        return Topics.bridge_topic("response", base_topic)
 
     @staticmethod
     def event(
@@ -213,11 +216,11 @@ class Topics:
     def parse_bridge_command_topic(
         topic: str,
         base_topic: str = DEFAULT_BASE_TOPIC,
-    ) -> str:
+    ) -> None:
         base = Topics._clean_segment(base_topic)
         parts = topic.strip("/").split("/")
 
-        if len(parts) != 4:
+        if len(parts) != 3:
             raise TopicError(
                 f"Invalid bridge command topic '{topic}'."
             )
@@ -225,13 +228,11 @@ class Topics:
         if (
             parts[0] != base
             or parts[1] != "bridge"
-            or parts[3] != "command"
+            or parts[2] != "command"
         ):
             raise TopicError(
                 f"Invalid bridge command topic '{topic}'."
             )
-
-        return parts[2]
 
     @staticmethod
     def unique_id(device: DeviceConfig) -> str:

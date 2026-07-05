@@ -94,6 +94,17 @@ class BridgeHealth(Enum):
     STOPPING = auto()
 
 
+class BridgeCommand(Enum):
+    """Supported bridge control commands."""
+
+    STATUS = auto()
+    SYNC = auto()
+    REDISCOVER = auto()
+    PRUNE_DISCOVERY = auto()
+    RESET_DISCOVERY = auto()
+    PING = auto()
+
+
 ###############################################################################
 # Configuration
 ###############################################################################
@@ -395,6 +406,20 @@ class PublishStatusAction(BridgeAction):
     mochad_connected: bool
 
     retain: bool = True
+
+
+@dataclass(slots=True, frozen=True)
+class PublishBridgeResponseAction(BridgeAction):
+
+    command: BridgeCommand | None
+
+    success: bool
+
+    message: str
+
+    payload: dict = field(default_factory=dict)
+
+    retain: bool = False
 
 
 @dataclass(slots=True, frozen=True)

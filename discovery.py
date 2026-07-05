@@ -7,7 +7,7 @@ device configuration and never publishes MQTT or modifies runtime state.
 
 from __future__ import annotations
 
-from models import DeviceConfig, DiscoveryMessage, DeviceType
+from models import BridgeCommand, DeviceConfig, DiscoveryMessage, DeviceType
 from topics import TopicError, Topics
 from version import BRIDGE_AUTHOR, BRIDGE_VERSION
 
@@ -33,6 +33,7 @@ class DiscoveryManager:
         base_topic: str = "x10",
         friendly_topics: bool = False,
         support_url: str = DEFAULT_SUPPORT_URL,
+        enable_maintenance_buttons: bool = False,
     ) -> None:
         self.discovery_prefix = discovery_prefix
         self.base_topic = base_topic
@@ -40,6 +41,7 @@ class DiscoveryManager:
         # address-based MQTT device topics.
         self.friendly_topics = friendly_topics
         self.support_url = support_url
+        self.enable_maintenance_buttons = enable_maintenance_buttons
 
     def discovery_messages(
         self,
@@ -73,8 +75,33 @@ class DiscoveryManager:
                 name="Mochad Connected",
                 value_key="mochad_connected",
             ),
-            self._bridge_prune_button_message(),
+            self._bridge_command_button_message(
+                command=BridgeCommand.SYNC,
+                object_id="mqtt_mochad_bridge_sync",
+                name="Sync X10 Status",
+            ),
+            self._bridge_command_button_message(
+                command=BridgeCommand.REDISCOVER,
+                object_id="mqtt_mochad_bridge_rediscover",
+                name="Rediscover X10 Entities",
+            ),
         ]
+
+        if self.enable_maintenance_buttons:
+            messages.extend(
+                [
+                    self._bridge_command_button_message(
+                        command=BridgeCommand.PRUNE_DISCOVERY,
+                        object_id="mqtt_mochad_bridge_prune_discovery",
+                        name="Prune Discovery",
+                    ),
+                    self._bridge_command_button_message(
+                        command=BridgeCommand.RESET_DISCOVERY,
+                        object_id="mqtt_mochad_bridge_reset_discovery",
+                        name="Reset Discovery",
+                    ),
+                ]
+            )
 
         for message in messages:
             self._validate_bridge_message(message)
@@ -167,21 +194,25 @@ class DiscoveryManager:
             retain=True,
         )
 
-    def _bridge_prune_button_message(self) -> DiscoveryMessage:
+    def _bridge_command_button_message(
+        self,
+        command: BridgeCommand,
+        object_id: str,
+        name: str,
+    ) -> DiscoveryMessage:
         return DiscoveryMessage(
             topic=Topics.bridge_discovery(
                 "button",
-                "mqtt_mochad_bridge_prune_entities",
+                object_id,
                 discovery_prefix=self.discovery_prefix,
             ),
             payload={
-                "name": "Prune Home Assistant Entities",
-                "unique_id": "mqtt_mochad_bridge_prune_entities",
+                "name": name,
+                "unique_id": object_id,
                 "command_topic": Topics.bridge_command(
-                    "prune_entities",
                     base_topic=self.base_topic,
                 ),
-                "payload_press": "PRESS",
+                "payload_press": command.name,
                 "availability_topic": Topics.availability(
                     base_topic=self.base_topic,
                 ),

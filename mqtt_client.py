@@ -37,7 +37,6 @@ class MqttCommandMessage:
 class MqttBridgeCommandMessage:
     """Inbound MQTT bridge command message."""
 
-    command: str
     payload: str
     topic: str
 
@@ -187,12 +186,12 @@ class MqttClient:
         self._client.loop_stop()
 
     def subscribe_commands(self) -> None:
+        # The device command wildcard also receives x10/bridge/command.
+        # _on_message routes the bridge topic first so it is not treated as a
+        # device command, and avoiding an overlapping exact subscription keeps
+        # brokers from delivering duplicate bridge commands.
         self._client.subscribe(
             Topics.command_filter(self.base_topic),
-            qos=0,
-        )
-        self._client.subscribe(
-            Topics.bridge_command_filter(self.base_topic),
             qos=0,
         )
 
@@ -298,6 +297,17 @@ class MqttClient:
             retain=retain,
         )
 
+    def publish_bridge_response(
+        self,
+        payload: Payload,
+        retain: bool = False,
+    ) -> None:
+        self.publish(
+            Topics.bridge_response(base_topic=self.base_topic),
+            payload,
+            retain=retain,
+        )
+
     def _configure_client(self) -> None:
         if self.username:
             _LOG.info("MQTT username configured")
@@ -384,10 +394,10 @@ class MqttClient:
             errors="replace",
         ).strip()
 
-        if self._handle_device_command_message(message.topic, payload):
+        if self._handle_bridge_command_message(message.topic, payload):
             return
 
-        if self._handle_bridge_command_message(message.topic, payload):
+        if self._handle_device_command_message(message.topic, payload):
             return
 
         _LOG.warning(
@@ -438,7 +448,7 @@ class MqttClient:
         payload: str,
     ) -> bool:
         try:
-            command = Topics.parse_bridge_command_topic(
+            Topics.parse_bridge_command_topic(
                 topic,
                 base_topic=self.base_topic,
             )
@@ -446,8 +456,7 @@ class MqttClient:
             return False
 
         _LOG.debug(
-            "MQTT bridge command message parsed command=%s payload=%s topic=%s",
-            command,
+            "MQTT bridge command message routed payload=%s topic=%s",
             payload,
             topic,
         )
@@ -456,7 +465,6 @@ class MqttClient:
             try:
                 self._bridge_command_callback(
                     MqttBridgeCommandMessage(
-                        command=command,
                         payload=payload,
                         topic=topic,
                     )
