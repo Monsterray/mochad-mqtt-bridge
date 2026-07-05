@@ -4,7 +4,7 @@ ARG BUILD_DATE
 ARG VCS_REF
 ARG IMAGE_VERSION=0.1.0
 
-LABEL org.opencontainers.image.title="mqtt-mochad-bridge"
+LABEL org.opencontainers.image.title="mochad-mqtt-bridge"
 LABEL org.opencontainers.image.description="MQTT bridge for a running mochad X10 TCP service"
 LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
@@ -19,10 +19,15 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN addgroup -S bridge \
+    && adduser -S -G bridge bridge \
+    && mkdir -p /config \
+    && chown -R bridge:bridge /config
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-compile -r requirements.txt
 
-COPY . .
+COPY --chown=bridge:bridge . .
 
 ENV MOCHAD_HOST=mochad
 ENV MOCHAD_PORT=1099
@@ -37,6 +42,8 @@ ENV BRIDGE_HEALTH_MAX_AGE_SECONDS=30
 ENV BRIDGE_DEBUG_WIRE=false
 
 VOLUME ["/config"]
+
+USER bridge
 
 HEALTHCHECK --interval=30s \
             --timeout=5s \

@@ -14,7 +14,9 @@ deprecated/
 *.egg-info/
 .DS_Store
 .git/
+.github/
 .gitignore
+tests/
 docker-compose.override.yml
 CHANGELOG.md
 CONTRIBUTING.md

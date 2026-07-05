@@ -15,6 +15,8 @@ This project follows semantic versioning once releases begin.
 - Smoke-test helpers for checking mochad TCP connectivity.
 - Basic GitHub Actions CI for Python 3.11-3.13, Compose validation, and Docker
   image builds.
+- Docker image publishing readiness metadata, documentation, and non-root
+  container runtime user.
 
 ### Known Gaps
 

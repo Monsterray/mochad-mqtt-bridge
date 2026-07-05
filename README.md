@@ -52,6 +52,27 @@ docker compose up --build
 The standalone compose file expects an external Docker network named `mqtt` by
 default. Set `MQTT_DOCKER_NETWORK` if your broker is on a different network.
 
+## Docker Image
+
+The compose file builds the image locally for development and first-run testing.
+When published images are enabled later, the intended image name is:
+
+```text
+ghcr.io/monsterray/mochad-mqtt-bridge
+```
+
+To use a published image in the future, replace the compose `build:` block with
+an `image:` reference such as:
+
+```yaml
+image: ghcr.io/monsterray/mochad-mqtt-bridge:0.1.0
+```
+
+No GitHub Container Registry publishing workflow is enabled yet.
+
+The container runs as a non-root user and stores mutable discovery registry data
+under `/config`.
+
 ## Configuration
 
 Important environment variables:
