@@ -13,6 +13,8 @@ This project follows semantic versioning once releases begin.
 - Address-based MQTT topics and stable Home Assistant `unique_id` values.
 - Docker runtime, health check, and standalone compose file.
 - Smoke-test helpers for checking mochad TCP connectivity.
+- Basic GitHub Actions CI for Python 3.11-3.13, Compose validation, and Docker
+  image builds.
 
 ### Known Gaps
 
