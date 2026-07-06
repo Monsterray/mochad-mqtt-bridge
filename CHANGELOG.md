@@ -17,6 +17,10 @@ This project follows semantic versioning once releases begin.
   image builds.
 - Docker image publishing readiness metadata, documentation, and non-root
   container runtime user.
+- mochad-redux TCP diagnostics integration for retained bridge status and
+  focused Home Assistant diagnostic entities.
+- Home Assistant discovery metadata tuned for bridge device pages, including
+  stable `default_entity_id` hints.
 
 ### Known Gaps
 

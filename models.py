@@ -224,6 +224,48 @@ class StatusSnapshot:
 
     completed: bool = False
 
+
+@dataclass(slots=True)
+class MochadDiagnostics:
+    """
+    Latest diagnostic details reported by mochad-redux TCP diagnostics.
+    """
+
+    daemon: str | None = None
+
+    version: str | None = None
+
+    upstream_base: str | None = None
+
+    diagnostics: bool | None = None
+
+    json: bool | None = None
+
+    single_line: bool | None = None
+
+    raw_data: bool | None = None
+
+    commands: tuple[str, ...] = ()
+
+    legacy_commands: tuple[str, ...] = ()
+
+    uptime_seconds: int | None = None
+
+    usb_connected: bool | None = None
+
+    controller: str | None = None
+
+    endpoints_ready: bool | None = None
+
+    transfers_ready: bool | None = None
+
+    clients_total: int | None = None
+
+    listeners: dict = field(default_factory=dict)
+
+    last_updated: float | None = None
+
+
 class ConnectionState(Enum):
     """Connection state for MQTT and mochad."""
 

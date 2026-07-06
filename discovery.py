@@ -7,15 +7,24 @@ device configuration and never publishes MQTT or modifies runtime state.
 
 from __future__ import annotations
 
-from models import BridgeCommand, DeviceConfig, DiscoveryMessage, DeviceType
+import re
+
+from models import (
+    BridgeCommand,
+    DeviceConfig,
+    DiscoveryMessage,
+    DeviceType,
+    MochadDiagnostics,
+)
 from topics import TopicError, Topics
 from version import BRIDGE_AUTHOR, BRIDGE_VERSION
 
 
 BRIDGE_DEVICE_IDENTIFIER = "mqtt_mochad_bridge"
 BRIDGE_DISPLAY_NAME = "MQTT Mochad Bridge"
-BRIDGE_MODEL = "CM19A MQTT Bridge"
-DEFAULT_SUPPORT_URL = "https://github.com/"
+BRIDGE_MODEL = "X10 MQTT Bridge"
+DEFAULT_SUPPORT_URL = "https://github.com/Monsterray/mochad-mqtt-bridge"
+MOCHAD_REDUX_URL = "https://github.com/Monsterray/mochad-redux"
 
 
 class DiscoveryError(ValueError):
@@ -46,10 +55,11 @@ class DiscoveryManager:
     def discovery_messages(
         self,
         device: DeviceConfig,
+        mochad_diagnostics: MochadDiagnostics | None = None,
     ) -> list[DiscoveryMessage]:
         self._validate_device(device)
 
-        payload = self._payload(device)
+        payload = self._payload(device, mochad_diagnostics)
         message = DiscoveryMessage(
             topic=Topics.discovery(
                 device,
@@ -62,28 +72,46 @@ class DiscoveryManager:
 
         return [message]
 
-    def bridge_diagnostic_messages(self) -> list[DiscoveryMessage]:
+    def bridge_diagnostic_messages(
+        self,
+        mochad_diagnostics: MochadDiagnostics | None = None,
+    ) -> list[DiscoveryMessage]:
         messages = [
-            self._bridge_status_sensor_message(),
-            self._bridge_connectivity_sensor_message(
-                object_id="mqtt_mochad_bridge_mqtt_connected",
-                name="MQTT Connected",
-                value_key="mqtt_connected",
-            ),
+            self._bridge_status_sensor_message(mochad_diagnostics),
             self._bridge_connectivity_sensor_message(
                 object_id="mqtt_mochad_bridge_mochad_connected",
                 name="Mochad Connected",
                 value_key="mochad_connected",
+                mochad_diagnostics=mochad_diagnostics,
+            ),
+            self._bridge_usb_sensor_message(mochad_diagnostics),
+            self._bridge_value_sensor_message(
+                object_id="mqtt_mochad_bridge_controller",
+                name="Controller Type",
+                value_template=(
+                    "{{ value_json.mochad.health.controller | default('unknown') }}"
+                ),
+                mochad_diagnostics=mochad_diagnostics,
+            ),
+            self._bridge_value_sensor_message(
+                object_id="mqtt_mochad_bridge_mochad_version",
+                name="Mochad Version",
+                value_template=(
+                    "{{ value_json.mochad.version | default('unknown') }}"
+                ),
+                mochad_diagnostics=mochad_diagnostics,
             ),
             self._bridge_command_button_message(
                 command=BridgeCommand.SYNC,
                 object_id="mqtt_mochad_bridge_sync",
                 name="Sync X10 Status",
+                mochad_diagnostics=mochad_diagnostics,
             ),
             self._bridge_command_button_message(
                 command=BridgeCommand.REDISCOVER,
                 object_id="mqtt_mochad_bridge_rediscover",
                 name="Rediscover X10 Entities",
+                mochad_diagnostics=mochad_diagnostics,
             ),
         ]
 
@@ -94,11 +122,13 @@ class DiscoveryManager:
                         command=BridgeCommand.PRUNE_DISCOVERY,
                         object_id="mqtt_mochad_bridge_prune_discovery",
                         name="Prune Discovery",
+                        mochad_diagnostics=mochad_diagnostics,
                     ),
                     self._bridge_command_button_message(
                         command=BridgeCommand.RESET_DISCOVERY,
                         object_id="mqtt_mochad_bridge_reset_discovery",
                         name="Reset Discovery",
+                        mochad_diagnostics=mochad_diagnostics,
                     ),
                 ]
             )
@@ -111,10 +141,15 @@ class DiscoveryManager:
     def _payload(
         self,
         device: DeviceConfig,
+        mochad_diagnostics: MochadDiagnostics | None,
     ) -> dict:
         return {
             "name": device.name,
             "unique_id": Topics.unique_id(device),
+            "default_entity_id": self._default_entity_id(
+                Topics.entity_type(device),
+                Topics.unique_id(device),
+            ),
             "state_topic": Topics.state(
                 device,
                 base_topic=self.base_topic,
@@ -130,11 +165,14 @@ class DiscoveryManager:
             ),
             "payload_on": "ON",
             "payload_off": "OFF",
-            "device": self._device_block(),
-            "origin": self._origin_block(),
+            "device": self._device_block(mochad_diagnostics),
+            "origin": self._origin_block(mochad_diagnostics),
         }
 
-    def _bridge_status_sensor_message(self) -> DiscoveryMessage:
+    def _bridge_status_sensor_message(
+        self,
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> DiscoveryMessage:
         return DiscoveryMessage(
             topic=Topics.bridge_discovery(
                 "sensor",
@@ -144,6 +182,10 @@ class DiscoveryManager:
             payload={
                 "name": "Bridge Status",
                 "unique_id": "mqtt_mochad_bridge_status",
+                "default_entity_id": self._default_entity_id(
+                    "sensor",
+                    "mqtt_mochad_bridge_status",
+                ),
                 "state_topic": Topics.status(
                     base_topic=self.base_topic,
                 ),
@@ -152,8 +194,8 @@ class DiscoveryManager:
                     base_topic=self.base_topic,
                 ),
                 "entity_category": "diagnostic",
-                "device": self._device_block(),
-                "origin": self._origin_block(),
+                "device": self._device_block(mochad_diagnostics),
+                "origin": self._origin_block(mochad_diagnostics),
             },
             retain=True,
         )
@@ -163,6 +205,7 @@ class DiscoveryManager:
         object_id: str,
         name: str,
         value_key: str,
+        mochad_diagnostics: MochadDiagnostics | None,
     ) -> DiscoveryMessage:
         return DiscoveryMessage(
             topic=Topics.bridge_discovery(
@@ -173,6 +216,10 @@ class DiscoveryManager:
             payload={
                 "name": name,
                 "unique_id": object_id,
+                "default_entity_id": self._default_entity_id(
+                    "binary_sensor",
+                    object_id,
+                ),
                 "state_topic": Topics.status(
                     base_topic=self.base_topic,
                 ),
@@ -188,8 +235,78 @@ class DiscoveryManager:
                     base_topic=self.base_topic,
                 ),
                 "entity_category": "diagnostic",
-                "device": self._device_block(),
-                "origin": self._origin_block(),
+                "device": self._device_block(mochad_diagnostics),
+                "origin": self._origin_block(mochad_diagnostics),
+            },
+            retain=True,
+        )
+
+    def _bridge_usb_sensor_message(
+        self,
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=Topics.bridge_discovery(
+                "binary_sensor",
+                "mqtt_mochad_bridge_usb_connected",
+                discovery_prefix=self.discovery_prefix,
+            ),
+            payload={
+                "name": "USB Connected",
+                "unique_id": "mqtt_mochad_bridge_usb_connected",
+                "default_entity_id": self._default_entity_id(
+                    "binary_sensor",
+                    "mqtt_mochad_bridge_usb_connected",
+                ),
+                "state_topic": Topics.status(
+                    base_topic=self.base_topic,
+                ),
+                "value_template": (
+                    "{{ 'ON' if value_json.mochad.health.usb_connected else 'OFF' }}"
+                ),
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device_class": "connectivity",
+                "availability_topic": Topics.availability(
+                    base_topic=self.base_topic,
+                ),
+                "entity_category": "diagnostic",
+                "device": self._device_block(mochad_diagnostics),
+                "origin": self._origin_block(mochad_diagnostics),
+            },
+            retain=True,
+        )
+
+    def _bridge_value_sensor_message(
+        self,
+        object_id: str,
+        name: str,
+        value_template: str,
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> DiscoveryMessage:
+        return DiscoveryMessage(
+            topic=Topics.bridge_discovery(
+                "sensor",
+                object_id,
+                discovery_prefix=self.discovery_prefix,
+            ),
+            payload={
+                "name": name,
+                "unique_id": object_id,
+                "default_entity_id": self._default_entity_id(
+                    "sensor",
+                    object_id,
+                ),
+                "state_topic": Topics.status(
+                    base_topic=self.base_topic,
+                ),
+                "value_template": value_template,
+                "availability_topic": Topics.availability(
+                    base_topic=self.base_topic,
+                ),
+                "entity_category": "diagnostic",
+                "device": self._device_block(mochad_diagnostics),
+                "origin": self._origin_block(mochad_diagnostics),
             },
             retain=True,
         )
@@ -199,6 +316,7 @@ class DiscoveryManager:
         command: BridgeCommand,
         object_id: str,
         name: str,
+        mochad_diagnostics: MochadDiagnostics | None,
     ) -> DiscoveryMessage:
         return DiscoveryMessage(
             topic=Topics.bridge_discovery(
@@ -209,6 +327,10 @@ class DiscoveryManager:
             payload={
                 "name": name,
                 "unique_id": object_id,
+                "default_entity_id": self._default_entity_id(
+                    "button",
+                    object_id,
+                ),
                 "command_topic": Topics.bridge_command(
                     base_topic=self.base_topic,
                 ),
@@ -217,29 +339,126 @@ class DiscoveryManager:
                     base_topic=self.base_topic,
                 ),
                 "entity_category": "diagnostic",
-                "device": self._device_block(),
-                "origin": self._origin_block(),
+                "device": self._device_block(mochad_diagnostics),
+                "origin": self._origin_block(mochad_diagnostics),
             },
             retain=True,
         )
 
-    def _device_block(self) -> dict:
-        return {
+    def _device_block(
+        self,
+        mochad_diagnostics: MochadDiagnostics | None = None,
+    ) -> dict:
+        payload = {
             "identifiers": [
                 BRIDGE_DEVICE_IDENTIFIER,
             ],
             "name": BRIDGE_DISPLAY_NAME,
             "manufacturer": BRIDGE_AUTHOR,
-            "model": BRIDGE_MODEL,
-            "sw_version": BRIDGE_VERSION,
+            "model": self._device_model(mochad_diagnostics),
+            "sw_version": self._device_sw_version(mochad_diagnostics),
+            "configuration_url": self.support_url,
         }
 
-    def _origin_block(self) -> dict:
+        controller = self._clean_diag_value(
+            mochad_diagnostics.controller if mochad_diagnostics else None
+        )
+        daemon = self._clean_diag_value(
+            mochad_diagnostics.daemon if mochad_diagnostics else None
+        )
+        version = self._clean_diag_value(
+            mochad_diagnostics.version if mochad_diagnostics else None
+        )
+
+        if daemon:
+            payload["model_id"] = daemon
+
+        if controller:
+            payload["hw_version"] = controller
+
+        if version:
+            payload["configuration_url"] = MOCHAD_REDUX_URL
+
+        return payload
+
+    def _origin_block(
+        self,
+        mochad_diagnostics: MochadDiagnostics | None = None,
+    ) -> dict:
+        version = self._clean_diag_value(
+            mochad_diagnostics.version if mochad_diagnostics else None
+        )
         return {
             "name": BRIDGE_DISPLAY_NAME,
-            "sw_version": BRIDGE_VERSION,
+            "sw_version": self._origin_version(version),
             "support_url": self.support_url,
         }
+
+    @staticmethod
+    def _device_model(
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> str:
+        controller = DiscoveryManager._clean_diag_value(
+            mochad_diagnostics.controller if mochad_diagnostics else None
+        )
+
+        if controller:
+            return f"{controller} MQTT Bridge"
+
+        return BRIDGE_MODEL
+
+    @staticmethod
+    def _device_sw_version(
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> str:
+        daemon = DiscoveryManager._clean_diag_value(
+            mochad_diagnostics.daemon if mochad_diagnostics else None
+        )
+        version = DiscoveryManager._clean_diag_value(
+            mochad_diagnostics.version if mochad_diagnostics else None
+        )
+
+        if daemon and version:
+            return f"bridge {BRIDGE_VERSION}; {daemon} {version}"
+
+        if version:
+            return f"bridge {BRIDGE_VERSION}; mochad {version}"
+
+        return BRIDGE_VERSION
+
+    @staticmethod
+    def _origin_version(
+        mochad_version: str | None,
+    ) -> str:
+        if mochad_version:
+            return f"{BRIDGE_VERSION}; mochad {mochad_version}"
+
+        return BRIDGE_VERSION
+
+    @staticmethod
+    def _clean_diag_value(
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        value = str(value).strip()
+
+        if not value or value.lower() in {"none", "unknown"}:
+            return None
+
+        return value
+
+    @staticmethod
+    def _default_entity_id(
+        component: str,
+        unique_id: str,
+    ) -> str:
+        slug = unique_id.strip().lower()
+        slug = re.sub(r"[^a-z0-9_]+", "_", slug)
+        slug = re.sub(r"_+", "_", slug).strip("_")
+
+        return f"{component}.{slug}"
 
     def _validate_device(
         self,

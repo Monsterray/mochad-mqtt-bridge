@@ -129,8 +129,10 @@ Home Assistant discovery topics:
 homeassistant/light/x10_A1/config
 homeassistant/switch/x10_A2/config
 homeassistant/sensor/mqtt_mochad_bridge_status/config
-homeassistant/binary_sensor/mqtt_mochad_bridge_mqtt_connected/config
 homeassistant/binary_sensor/mqtt_mochad_bridge_mochad_connected/config
+homeassistant/binary_sensor/mqtt_mochad_bridge_usb_connected/config
+homeassistant/sensor/mqtt_mochad_bridge_controller/config
+homeassistant/sensor/mqtt_mochad_bridge_mochad_version/config
 homeassistant/button/mqtt_mochad_bridge_sync/config
 homeassistant/button/mqtt_mochad_bridge_rediscover/config
 ```
@@ -138,11 +140,18 @@ homeassistant/button/mqtt_mochad_bridge_rediscover/config
 Friendly names only affect Home Assistant display names. They never affect
 MQTT topic identity or Home Assistant `unique_id`.
 
-The bridge publishes a retained JSON status document to `x10/bridge/status`.
-Home Assistant diagnostics are discovered from that document. The retained
-registry at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set
-`DISCOVERY_CLEANUP=true` to also prune stale Home Assistant MQTT discovery
-topics on startup.
+The bridge publishes one retained JSON status document to
+`x10/bridge/status`. On mochad-redux connect or reconnect, the bridge queries
+`hello`, `capabilities`, and `health`, then folds the useful results into that
+status document. Home Assistant diagnostics are discovered from that document:
+bridge status, mochad connection, USB connection, controller type, and mochad
+version. mochad-redux capability data is grouped under `mochad.features`, and
+runtime controller data is grouped under `mochad.health`. The retained registry
+at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set `DISCOVERY_CLEANUP=true`
+to also prune stale Home Assistant MQTT discovery topics on startup.
+
+Discovery payloads use stable `unique_id` values and `default_entity_id` hints.
+They do not set Home Assistant's deprecated discovery payload `object_id`.
 
 Bridge control commands are published to `x10/bridge/command` with one of
 these payloads:

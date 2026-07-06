@@ -9,6 +9,7 @@ payloads, or construct MQTT topics.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import signal
 import time
@@ -26,6 +27,7 @@ from models import (
     DeviceConfig,
     DiscoveryMessage,
     LogUnknownEventAction,
+    MochadDiagnostics,
     PublishAvailabilityAction,
     PublishBridgeResponseAction,
     PublishDiscoveryAction,
@@ -144,6 +146,7 @@ class Bridge:
         self.discovery_registry = DiscoveryRegistry(
             config.discovery_registry_path
         )
+        self._mochad_diagnostics = MochadDiagnostics()
         _LOG.info(
             "Discovery cleanup enabled=%s registry_path=%s",
             config.discovery_cleanup,
@@ -285,7 +288,10 @@ class Bridge:
         if isinstance(action, PublishDiscoveryAction):
             device = self._device_config(action.address)
 
-            for message in self.discovery.discovery_messages(device):
+            for message in self.discovery.discovery_messages(
+                device,
+                self._mochad_diagnostics,
+            ):
                 _LOG.info(
                     "MQTT publish discovery address=%s topic=%s retain=%s",
                     action.address,
@@ -312,11 +318,11 @@ class Bridge:
                 action.mochad_connected,
             )
             self.clients.mqtt.publish_status(
-                {
-                    "status": action.status,
-                    "mqtt_connected": action.mqtt_connected,
-                    "mochad_connected": action.mochad_connected,
-                },
+                self._bridge_status_payload(
+                    status=action.status,
+                    mqtt_connected=action.mqtt_connected,
+                    mochad_connected=action.mochad_connected,
+                ),
                 retain=action.retain,
             )
             return
@@ -602,6 +608,7 @@ class Bridge:
     def _on_mochad_connected(self) -> None:
         _LOG.info("mochad connected")
         self.execute_actions(self.state.mochad_connected())
+        self._request_mochad_diagnostics()
         self._write_health(
             "running" if self.state.available else "starting"
         )
@@ -615,6 +622,10 @@ class Bridge:
         else:
             _LOG.warning("mochad disconnected")
 
+        self._mochad_diagnostics.usb_connected = None
+        self._mochad_diagnostics.endpoints_ready = None
+        self._mochad_diagnostics.transfers_ready = None
+        self._mochad_diagnostics.last_updated = time.time()
         self.execute_actions(self.state.mochad_disconnected())
         self._write_health("starting")
 
@@ -624,6 +635,10 @@ class Bridge:
     ) -> None:
         line = line.strip("\r\n")
         _LOG.info("mochad line received raw=%s", line)
+
+        if self._handle_mochad_diagnostic_line(line):
+            return
+
         event = self.parser.parse_line(line)
         _LOG.info(
             "mochad line parsed event_type=%s",
@@ -678,7 +693,9 @@ class Bridge:
         return address[0] in self.config.x10_housecodes
 
     def _publish_bridge_diagnostic_discovery(self) -> None:
-        for message in self.discovery.bridge_diagnostic_messages():
+        for message in self.discovery.bridge_diagnostic_messages(
+            self._mochad_diagnostics
+        ):
             _LOG.info(
                 "MQTT publish bridge discovery topic=%s retain=%s",
                 message.topic,
@@ -691,11 +708,16 @@ class Bridge:
 
         for device in self.devices.values():
             messages.extend(
-                self.discovery.discovery_messages(device)
+                self.discovery.discovery_messages(
+                    device,
+                    self._mochad_diagnostics,
+                )
             )
 
         messages.extend(
-            self.discovery.bridge_diagnostic_messages()
+            self.discovery.bridge_diagnostic_messages(
+                self._mochad_diagnostics
+            )
         )
 
         for message in messages:
@@ -817,11 +839,16 @@ class Bridge:
 
         for device in self.devices.values():
             messages.extend(
-                self.discovery.discovery_messages(device)
+                self.discovery.discovery_messages(
+                    device,
+                    self._mochad_diagnostics,
+                )
             )
 
         messages.extend(
-            self.discovery.bridge_diagnostic_messages()
+            self.discovery.bridge_diagnostic_messages(
+                self._mochad_diagnostics
+            )
         )
 
         return {message.topic for message in messages}
@@ -851,21 +878,161 @@ class Bridge:
             retain=True,
         )
 
-    def _bridge_status_payload(self) -> dict:
+    def _request_mochad_diagnostics(self) -> None:
+        for command in ("hello", "capabilities", "health"):
+            try:
+                _LOG.info("Requesting mochad diagnostic command=%s", command)
+                self.execute_action(
+                    SendMochadCommandAction(command=command)
+                )
+            except (ConnectionError, OSError) as exc:
+                _LOG.warning(
+                    "mochad diagnostic request failed command=%s error=%s",
+                    command,
+                    exc,
+                )
+                return
+
+    def _handle_mochad_diagnostic_line(
+        self,
+        line: str,
+    ) -> bool:
+        if not line.startswith("{"):
+            return False
+
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+
+        if not isinstance(payload, dict):
+            return False
+
+        kind = self._mochad_diagnostic_kind(payload)
+
+        if kind is None:
+            return False
+
+        self._merge_mochad_diagnostics(payload)
+        _LOG.info(
+            "mochad diagnostic received kind=%s version=%s controller=%s usb_connected=%s",
+            kind,
+            self._mochad_diagnostics.version,
+            self._mochad_diagnostics.controller,
+            self._mochad_diagnostics.usb_connected,
+        )
+
+        if self.clients.mqtt.connected:
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
+
+            if kind in {"hello", "health"}:
+                self._publish_current_discovery()
+                self._save_discovery_registry(
+                    self._desired_discovery_topics()
+                )
+
+        return True
+
+    @staticmethod
+    def _mochad_diagnostic_kind(
+        payload: dict,
+    ) -> str | None:
+        if payload.get("diagnostics") is True and "daemon" in payload:
+            return "hello"
+
+        if payload.get("json") is True and "commands" in payload:
+            return "capabilities"
+
+        if "usb_connected" in payload or "controller" in payload:
+            return "health"
+
+        return None
+
+    def _merge_mochad_diagnostics(
+        self,
+        payload: dict,
+    ) -> None:
+        diagnostics = self._mochad_diagnostics
+        diagnostics.last_updated = time.time()
+
+        for field_name in (
+            "daemon",
+            "version",
+            "upstream_base",
+            "diagnostics",
+            "json",
+            "single_line",
+            "raw_data",
+            "uptime_seconds",
+            "usb_connected",
+            "controller",
+            "endpoints_ready",
+            "transfers_ready",
+            "clients_total",
+            "listeners",
+        ):
+            if field_name in payload:
+                setattr(diagnostics, field_name, payload[field_name])
+
+        for field_name in ("commands", "legacy_commands"):
+            if field_name in payload and isinstance(payload[field_name], list):
+                setattr(
+                    diagnostics,
+                    field_name,
+                    tuple(str(item) for item in payload[field_name]),
+                )
+
+    def _bridge_status_payload(
+        self,
+        status: str | None = None,
+        mqtt_connected: bool | None = None,
+        mochad_connected: bool | None = None,
+    ) -> dict:
         snapshot = self.state.snapshot()
-        statistics = self.state.statistics()
+        status = status or ("online" if self.state.available else "offline")
 
         return {
+            "status": status,
             "available": self.state.available,
-            "mqtt_connected": self.clients.mqtt.connected,
-            "mochad_connected": self.clients.mochad.connected,
+            "mqtt_connected": (
+                self.clients.mqtt.connected
+                if mqtt_connected is None
+                else mqtt_connected
+            ),
+            "mochad_connected": (
+                self.clients.mochad.connected
+                if mochad_connected is None
+                else mochad_connected
+            ),
             "configured_devices": len(self.devices),
             "known_devices": len(snapshot),
-            "mqtt_connections": statistics.mqtt_connections,
-            "mqtt_disconnects": statistics.mqtt_disconnects,
-            "mqtt_reconnects": statistics.mqtt_reconnects,
-            "mochad_reconnects": statistics.mochad_reconnects,
-            "status_syncs": statistics.status_syncs,
+            "mochad": self._mochad_diagnostics_payload(),
+        }
+
+    def _mochad_diagnostics_payload(self) -> dict:
+        diagnostics = self._mochad_diagnostics
+
+        return {
+            "daemon": diagnostics.daemon,
+            "version": diagnostics.version,
+            "upstream_base": diagnostics.upstream_base,
+            "features": {
+                "diagnostics": diagnostics.diagnostics,
+                "json": diagnostics.json,
+                "single_line": diagnostics.single_line,
+                "raw_data": diagnostics.raw_data,
+            },
+            "health": {
+                "uptime_seconds": diagnostics.uptime_seconds,
+                "usb_connected": diagnostics.usb_connected,
+                "controller": diagnostics.controller,
+                "endpoints_ready": diagnostics.endpoints_ready,
+                "transfers_ready": diagnostics.transfers_ready,
+            },
+            "last_updated": diagnostics.last_updated,
         }
 
     @staticmethod
