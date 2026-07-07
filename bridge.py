@@ -133,6 +133,7 @@ class Bridge:
                 port=config.mqtt_port,
                 username=config.mqtt_username,
                 password=config.mqtt_password,
+                tls_config=config.mqtt_tls,
                 base_topic=config.mqtt_base_topic,
                 debug_wire=config.debug_wire,
             ),
@@ -1009,7 +1010,21 @@ class Bridge:
             ),
             "configured_devices": len(self.devices),
             "known_devices": len(snapshot),
+            "mqtt": self._mqtt_status_payload(),
             "mochad": self._mochad_diagnostics_payload(),
+        }
+
+    def _mqtt_status_payload(self) -> dict:
+        tls_config = self.config.mqtt_tls
+
+        return {
+            "tls": {
+                "enabled": tls_config.enabled,
+                "custom_ca": bool(tls_config.ca_file),
+                "client_certificate": bool(
+                    tls_config.cert_file and tls_config.key_file
+                ),
+            },
         }
 
     def _mochad_diagnostics_payload(self) -> dict:

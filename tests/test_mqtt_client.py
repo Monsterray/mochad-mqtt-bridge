@@ -1,5 +1,6 @@
 import unittest
 
+from config import MqttTlsConfig
 from mqtt_client import MqttClient
 
 
@@ -15,6 +16,8 @@ class FakePahoClient:
         self.on_disconnect = None
         self.on_message = None
         self.subscriptions = []
+        self.tls_context = None
+        self.calls = []
 
     def username_pw_set(self, username, password=None):
         pass
@@ -22,8 +25,12 @@ class FakePahoClient:
     def will_set(self, topic, payload=None, qos=0, retain=False):
         pass
 
+    def tls_set_context(self, context):
+        self.calls.append("tls_set_context")
+        self.tls_context = context
+
     def connect(self, host, port=1883, keepalive=60):
-        pass
+        self.calls.append("connect")
 
     def disconnect(self):
         pass
@@ -73,6 +80,53 @@ class MqttClientRoutingTests(unittest.TestCase):
         client.subscribe_commands()
 
         self.assertEqual(fake.subscriptions, [("x10/+/command", 0)])
+
+    def test_tls_context_is_installed_when_enabled(self):
+        fake = FakePahoClient()
+        context = object()
+        tls_config = MqttTlsConfig(
+            enabled=True,
+            ca_file="/run/secrets/ca.crt",
+        )
+
+        MqttClient(
+            host="mosquitto",
+            tls_config=tls_config,
+            ssl_context_factory=lambda config: context,
+            client_factory=lambda client_id: fake,
+        )
+
+        self.assertIs(fake.tls_context, context)
+
+    def test_tls_context_is_installed_before_connecting(self):
+        fake = FakePahoClient()
+        context = object()
+        client = MqttClient(
+            host="mosquitto",
+            tls_config=MqttTlsConfig(enabled=True),
+            ssl_context_factory=lambda config: context,
+            client_factory=lambda client_id: fake,
+        )
+
+        client.connect()
+
+        self.assertEqual(
+            fake.calls,
+            [
+                "tls_set_context",
+                "connect",
+            ],
+        )
+
+    def test_tls_context_is_not_installed_by_default(self):
+        fake = FakePahoClient()
+
+        MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+
+        self.assertIsNone(fake.tls_context)
 
 
 if __name__ == "__main__":

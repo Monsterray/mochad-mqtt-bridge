@@ -8,6 +8,11 @@ No MQTT usernames or passwords are stored in these files.
 Device MQTT topics are always stable X10-address topics such as
 `x10/A1/state`. Friendly names are display names only.
 
+These tools use the main mochad TCP listener on port `1099`. Do not use the
+legacy Flash XMLSocket-compatible listener on port `1100` for bridge testing;
+that listener uses NUL-delimited event framing and is intended only for legacy
+clients.
+
 ## Check TCP connectivity
 
 ```sh

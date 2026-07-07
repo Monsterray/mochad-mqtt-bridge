@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
+from config import MqttTlsConfig
 from models import Command, DeviceConfig, DiscoveryMessage
+from mqtt_tls import build_mqtt_ssl_context
 from topics import Topics
 
 
@@ -62,6 +65,12 @@ class PahoClientProtocol(Protocol):
     ) -> None:
         ...
 
+    def tls_set_context(
+        self,
+        context: ssl.SSLContext,
+    ) -> None:
+        ...
+
     def connect(
         self,
         host: str,
@@ -97,6 +106,7 @@ class PahoClientProtocol(Protocol):
 
 
 ClientFactory = Callable[[str], PahoClientProtocol]
+TlsContextFactory = Callable[[MqttTlsConfig], ssl.SSLContext | None]
 CommandCallback = Callable[[MqttCommandMessage], None]
 BridgeCommandCallback = Callable[[MqttBridgeCommandMessage], None]
 ConnectionCallback = Callable[[], None]
@@ -118,6 +128,8 @@ class MqttClient:
         client_id: str = "mqtt-mochad-bridge",
         keepalive: int = 60,
         debug_wire: bool = False,
+        tls_config: MqttTlsConfig | None = None,
+        ssl_context_factory: TlsContextFactory = build_mqtt_ssl_context,
         client_factory: ClientFactory | None = None,
     ) -> None:
         self.host = host
@@ -128,6 +140,8 @@ class MqttClient:
         self.client_id = client_id
         self.keepalive = keepalive
         self.debug_wire = debug_wire
+        self.tls_config = tls_config or MqttTlsConfig()
+        self._ssl_context_factory = ssl_context_factory
 
         factory = client_factory or self._default_client_factory
         self._client = factory(client_id)
@@ -169,10 +183,11 @@ class MqttClient:
 
     def connect(self) -> None:
         _LOG.info(
-            "Connecting to MQTT broker host=%s port=%s username_configured=%s",
+            "Connecting to MQTT broker host=%s port=%s username_configured=%s tls_enabled=%s",
             self.host,
             self.port,
             bool(self.username),
+            self.tls_config.enabled,
         )
         self._client.connect(
             self.host,
@@ -309,6 +324,8 @@ class MqttClient:
         )
 
     def _configure_client(self) -> None:
+        self._configure_tls()
+
         if self.username:
             _LOG.info("MQTT username configured")
             self._client.username_pw_set(
@@ -330,6 +347,24 @@ class MqttClient:
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
+
+    def _configure_tls(self) -> None:
+        if not self.tls_config.enabled:
+            return
+
+        context = self._ssl_context_factory(self.tls_config)
+
+        if context is None:
+            raise RuntimeError(
+                "MQTT TLS is enabled but no SSL context was created."
+            )
+
+        self._client.tls_set_context(context)
+        _LOG.info(
+            "MQTT TLS configured custom_ca=%s client_certificate=%s",
+            bool(self.tls_config.ca_file),
+            bool(self.tls_config.cert_file),
+        )
 
     def _on_connect(
         self,

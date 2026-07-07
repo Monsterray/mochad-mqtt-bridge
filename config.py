@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from models import DeviceConfig, DeviceType
 
@@ -55,6 +56,17 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(slots=True, frozen=True)
+class MqttTlsConfig:
+    """MQTT TLS settings parsed from the environment."""
+
+    enabled: bool = False
+    ca_file: str | None = None
+    cert_file: str | None = None
+    key_file: str | None = None
+    key_password: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class Config:
 
     mochad_host: str
@@ -65,6 +77,7 @@ class Config:
 
     mqtt_username: str | None
     mqtt_password: str | None
+    mqtt_tls: MqttTlsConfig
 
     mqtt_base_topic: str
     mqtt_discovery_prefix: str
@@ -158,6 +171,89 @@ def _get_bool(
 
     raise ConfigError(
         f"{name} must be a boolean. Got '{value}'."
+    )
+
+
+def _get_secret(
+    name: str,
+    file_name: str,
+) -> str | None:
+    """
+    Read a secret value directly or from a Docker-secret-compatible file.
+
+    The secret contents are never logged. Files commonly include a trailing
+    newline, so only line endings are removed.
+    """
+
+    value = _get_env(name)
+    file_path = _get_env(file_name)
+
+    if value is not None and file_path is not None:
+        raise ConfigError(
+            f"Set only one of {name} or {file_name}."
+        )
+
+    if file_path is None:
+        return value
+
+    try:
+        secret = Path(file_path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(
+            f"{file_name} points to an unreadable file '{file_path}': {exc}"
+        ) from exc
+
+    secret = secret.rstrip("\r\n")
+
+    if secret == "":
+        return None
+
+    return secret
+
+
+def _load_mqtt_tls_config() -> MqttTlsConfig:
+    enabled = _get_bool("MQTT_TLS_ENABLED", False)
+    ca_file = _get_env("MQTT_TLS_CA_FILE")
+    cert_file = _get_env("MQTT_TLS_CERT_FILE")
+    key_file = _get_env("MQTT_TLS_KEY_FILE")
+    key_password = _get_secret(
+        "MQTT_TLS_KEY_PASSWORD",
+        "MQTT_TLS_KEY_PASSWORD_FILE",
+    )
+
+    tls_settings_configured = any(
+        (
+            ca_file,
+            cert_file,
+            key_file,
+            key_password,
+        )
+    )
+
+    if tls_settings_configured and not enabled:
+        raise ConfigError(
+            "MQTT_TLS_ENABLED must be true when MQTT TLS settings are configured."
+        )
+
+    if not enabled:
+        return MqttTlsConfig()
+
+    if bool(cert_file) != bool(key_file):
+        raise ConfigError(
+            "MQTT_TLS_CERT_FILE and MQTT_TLS_KEY_FILE must be set together."
+        )
+
+    if key_password is not None and key_file is None:
+        raise ConfigError(
+            "MQTT_TLS_KEY_PASSWORD requires MQTT_TLS_KEY_FILE."
+        )
+
+    return MqttTlsConfig(
+        enabled=True,
+        ca_file=ca_file,
+        cert_file=cert_file,
+        key_file=key_file,
+        key_password=key_password,
     )
 
 
@@ -359,9 +455,12 @@ def load_config() -> Config:
             "MQTT_USERNAME",
         ),
 
-        mqtt_password=_get_env(
+        mqtt_password=_get_secret(
             "MQTT_PASSWORD",
+            "MQTT_PASSWORD_FILE",
         ),
+
+        mqtt_tls=_load_mqtt_tls_config(),
 
         mqtt_base_topic=_get_env(
             "MQTT_BASE_TOPIC",

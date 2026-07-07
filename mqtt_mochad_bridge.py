@@ -26,6 +26,12 @@ def main() -> None:
         "MQTT username configured=%s",
         bool(config.mqtt_username),
     )
+    _LOG.info(
+        "MQTT TLS enabled=%s custom_ca=%s client_certificate=%s",
+        config.mqtt_tls.enabled,
+        bool(config.mqtt_tls.ca_file),
+        bool(config.mqtt_tls.cert_file and config.mqtt_tls.key_file),
+    )
 
     if not config.mqtt_username:
         _LOG.warning(

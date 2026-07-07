@@ -84,6 +84,13 @@ MQTT_HOST
 MQTT_PORT
 MQTT_USERNAME
 MQTT_PASSWORD
+MQTT_PASSWORD_FILE
+MQTT_TLS_ENABLED
+MQTT_TLS_CA_FILE
+MQTT_TLS_CERT_FILE
+MQTT_TLS_KEY_FILE
+MQTT_TLS_KEY_PASSWORD
+MQTT_TLS_KEY_PASSWORD_FILE
 MQTT_BASE_TOPIC
 MQTT_DISCOVERY_PREFIX
 DISCOVERY_CLEANUP
@@ -98,6 +105,14 @@ BRIDGE_DEBUG_WIRE
 The variables above match the bridge runtime configuration in `config.py`.
 `BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check.
 
+`MOCHAD_PORT` should point at the main mochad TCP listener. The default is
+`1099`, and the bridge expects newline-delimited mochad events and diagnostic
+responses on that listener. Do not point the bridge at port `1100`; that port
+is the legacy Flash XMLSocket-compatible listener, which changes event framing
+from newline-delimited to NUL-delimited and does not provide structured XML.
+The bridge intentionally does not support the XMLSocket listener unless a
+future legacy-compatibility requirement makes it necessary.
+
 Example devices:
 
 ```text
@@ -107,6 +122,40 @@ X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
 Set `X10_HOUSECODES` to restrict which X10 house codes the bridge accepts.
 Unset means all house codes. Examples: `A`, `ACF`, `A,C,F`, or `A-D`.
 Filtered house codes do not create device state or Home Assistant discovery.
+
+## MQTT TLS
+
+TLS is disabled by default. Enable it explicitly:
+
+```text
+MQTT_TLS_ENABLED=true
+MQTT_PORT=8883
+```
+
+When TLS is enabled without `MQTT_TLS_CA_FILE`, Python's system trust store is
+used. To trust a private Mosquitto CA, mount the CA file into the container and
+set:
+
+```text
+MQTT_TLS_CA_FILE=/run/secrets/mqtt_ca.crt
+```
+
+For mutual TLS, configure both the client certificate and private key:
+
+```text
+MQTT_TLS_CERT_FILE=/run/secrets/mqtt_client.crt
+MQTT_TLS_KEY_FILE=/run/secrets/mqtt_client.key
+MQTT_TLS_KEY_PASSWORD_FILE=/run/secrets/mqtt_client_key_password
+```
+
+`MQTT_PASSWORD_FILE` and `MQTT_TLS_KEY_PASSWORD_FILE` support Docker-secret
+style files. Do not set both `MQTT_PASSWORD` and `MQTT_PASSWORD_FILE`, or both
+`MQTT_TLS_KEY_PASSWORD` and `MQTT_TLS_KEY_PASSWORD_FILE`.
+
+The bridge does not support insecure hostname verification and does not
+automatically fall back to plaintext. If any TLS file or private-key password
+setting is provided while `MQTT_TLS_ENABLED=false`, startup fails so the broker
+connection cannot silently downgrade.
 
 ## MQTT Topics
 
@@ -142,13 +191,16 @@ MQTT topic identity or Home Assistant `unique_id`.
 
 The bridge publishes one retained JSON status document to
 `x10/bridge/status`. On mochad-redux connect or reconnect, the bridge queries
-`hello`, `capabilities`, and `health`, then folds the useful results into that
-status document. Home Assistant diagnostics are discovered from that document:
-bridge status, mochad connection, USB connection, controller type, and mochad
-version. mochad-redux capability data is grouped under `mochad.features`, and
-runtime controller data is grouped under `mochad.health`. The retained registry
-at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set `DISCOVERY_CLEANUP=true`
-to also prune stale Home Assistant MQTT discovery topics on startup.
+`hello`, `capabilities`, and `health` over the main newline-delimited mochad
+listener, then folds the useful results into that status document. Home
+Assistant diagnostics are discovered from that document: bridge status, mochad
+connection, USB connection, controller type, and mochad version. mochad-redux
+capability data is grouped under `mochad.features`, and runtime controller data
+is grouped under `mochad.health`. MQTT TLS diagnostics are reported as safe
+booleans under `mqtt.tls`; file paths and passwords are never published. The
+retained registry at `DISCOVERY_REGISTRY_PATH` is updated on startup. Set
+`DISCOVERY_CLEANUP=true` to also prune stale Home Assistant MQTT discovery
+topics on startup.
 
 Discovery payloads use stable `unique_id` values and `default_entity_id` hints.
 They do not set Home Assistant's deprecated discovery payload `object_id`.
@@ -169,6 +221,27 @@ Command results are published to `x10/bridge/response`. Home Assistant buttons
 for `SYNC` and `REDISCOVER` are discovered by default. Set
 `ENABLE_MAINTENANCE_BUTTONS=true` to enable destructive maintenance commands
 and Home Assistant buttons for `PRUNE_DISCOVERY` and `RESET_DISCOVERY`.
+
+## Future Mochad JSON API
+
+The bridge currently uses the main newline-delimited mochad TCP listener on
+port `1099`. A future `mochad-redux` milestone may add an optional generic
+JSON-RPC API on port `1102`. When that daemon API exists, the bridge can add a
+protocol selector such as:
+
+```text
+MOCHAD_PROTOCOL=auto|json|legacy
+```
+
+Planned behavior:
+
+- `auto`: try the JSON API, then fall back to the legacy main listener.
+- `json`: require the JSON API and fail clearly if it is unavailable.
+- `legacy`: keep the current newline-delimited listener behavior.
+
+This is not implemented yet. The daemon JSON protocol must remain generic X10
+infrastructure; MQTT topics and Home Assistant entity concepts stay in this
+bridge and in Home Assistant integrations, not in `mochad-redux`.
 
 ## Debugging
 

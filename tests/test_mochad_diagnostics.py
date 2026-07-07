@@ -1,7 +1,9 @@
+import json
 import unittest
 from types import SimpleNamespace
 
 from bridge import Bridge
+from config import MqttTlsConfig
 from models import MochadDiagnostics
 
 
@@ -100,6 +102,42 @@ class MochadDiagnosticTests(unittest.TestCase):
         self.assertNotIn("commands", payload)
         self.assertNotIn("listeners", payload)
         self.assertNotIn("clients_total", payload)
+
+    def test_bridge_status_payload_contains_only_safe_tls_attributes(self):
+        bridge = object.__new__(Bridge)
+        bridge.config = SimpleNamespace(
+            mqtt_tls=MqttTlsConfig(
+                enabled=True,
+                ca_file="/run/secrets/mqtt-ca.crt",
+                cert_file="/run/secrets/mqtt-client.crt",
+                key_file="/run/secrets/mqtt-client.key",
+                key_password="secret-password",
+            )
+        )
+        bridge.state = SimpleNamespace(
+            available=True,
+            snapshot=lambda: {},
+        )
+        bridge.clients = SimpleNamespace(
+            mqtt=SimpleNamespace(connected=True),
+            mochad=SimpleNamespace(connected=True),
+        )
+        bridge.devices = {}
+        bridge._mochad_diagnostics = MochadDiagnostics()
+
+        payload = bridge._bridge_status_payload()
+
+        self.assertEqual(
+            payload["mqtt"]["tls"],
+            {
+                "enabled": True,
+                "custom_ca": True,
+                "client_certificate": True,
+            },
+        )
+        payload_text = json.dumps(payload)
+        self.assertNotIn("/run/secrets", payload_text)
+        self.assertNotIn("secret-password", payload_text)
 
 
 if __name__ == "__main__":
