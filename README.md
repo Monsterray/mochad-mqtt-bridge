@@ -93,10 +93,13 @@ MQTT_TLS_KEY_PASSWORD
 MQTT_TLS_KEY_PASSWORD_FILE
 MQTT_BASE_TOPIC
 MQTT_DISCOVERY_PREFIX
+BRIDGE_CONFIG_FILE
+BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS
 DISCOVERY_CLEANUP
 DISCOVERY_REGISTRY_PATH
 ENABLE_MAINTENANCE_BUTTONS
 X10_DEVICES
+X10_USE_FRIENDLY_NAMES
 X10_HOUSECODES
 LOG_LEVEL
 BRIDGE_DEBUG_WIRE
@@ -117,6 +120,44 @@ Example devices:
 
 ```text
 X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
+```
+
+Friendly names are enabled by default and are used only for Home Assistant
+display names. Set `X10_USE_FRIENDLY_NAMES=false` to make discovered entity
+names use stable X10 addresses such as `A1`.
+
+For runtime-editable device names, set `BRIDGE_CONFIG_FILE` to a JSON file
+inside the container, for example `/config/bridge.json`. The bridge checks the
+file every `BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS` seconds and republishes
+Home Assistant discovery when device names or configured devices change.
+
+Example `bridge.json`:
+
+```json
+{
+  "use_friendly_names": true,
+  "devices": [
+    {
+      "address": "A1",
+      "name": "Living Room Lamp",
+      "type": "light"
+    },
+    {
+      "address": "A2",
+      "name": "Coffee Maker",
+      "type": "switch"
+    }
+  ]
+}
+```
+
+The JSON file can also use the compact string form:
+
+```json
+{
+  "use_friendly_names": false,
+  "x10_devices": "A1:Living Room Lamp:light,A2:Coffee Maker:switch"
+}
 ```
 
 Set `X10_HOUSECODES` to restrict which X10 house codes the bridge accepts.

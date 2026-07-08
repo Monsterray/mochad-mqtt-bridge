@@ -8,6 +8,7 @@ This module is the ONLY place that reads environment variables.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -30,6 +31,7 @@ DEFAULT_MQTT_PORT = 1883
 DEFAULT_DISCOVERY_PREFIX = "homeassistant"
 DEFAULT_DISCOVERY_REGISTRY_PATH = "/config/discovery_registry.json"
 DEFAULT_BASE_TOPIC = "x10"
+DEFAULT_CONFIG_RELOAD_INTERVAL_SECONDS = 5.0
 
 DEFAULT_LOG_LEVEL = "INFO"
 
@@ -83,6 +85,14 @@ class Config:
     mqtt_discovery_prefix: str
 
     log_level: str
+
+    config_file: str | None = None
+
+    config_reload_interval_seconds: float = (
+        DEFAULT_CONFIG_RELOAD_INTERVAL_SECONDS
+    )
+
+    use_friendly_names: bool = True
 
     devices: dict[str, DeviceConfig] = field(default_factory=dict)
 
@@ -172,6 +182,31 @@ def _get_bool(
     raise ConfigError(
         f"{name} must be a boolean. Got '{value}'."
     )
+
+
+def _get_float(
+    name: str,
+    default: float,
+) -> float:
+
+    value = _get_env(name)
+
+    if value is None:
+        return default
+
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ConfigError(
+            f"{name} must be a number. Got '{value}'."
+        ) from exc
+
+    if parsed <= 0:
+        raise ConfigError(
+            f"{name} must be greater than zero. Got '{value}'."
+        )
+
+    return parsed
 
 
 def _get_secret(
@@ -293,7 +328,26 @@ def _parse_device_type(value: str) -> DeviceType:
     )
 
 
-def parse_devices(raw: str | None) -> dict[str, DeviceConfig]:
+def _display_name(
+    address: str,
+    name: str | None,
+    use_friendly_names: bool,
+) -> str:
+    if not use_friendly_names:
+        return address
+
+    if name is None:
+        return address
+
+    name = name.strip()
+
+    return name if name else address
+
+
+def parse_devices(
+    raw: str | None,
+    use_friendly_names: bool = True,
+) -> dict[str, DeviceConfig]:
 
     devices: dict[str, DeviceConfig] = {}
 
@@ -336,7 +390,11 @@ def parse_devices(raw: str | None) -> dict[str, DeviceConfig]:
 
             devices[address] = DeviceConfig(
                 address=address,
-                name=parts[1],
+                name=_display_name(
+                    address,
+                    parts[1],
+                    use_friendly_names,
+                ),
             )
 
             continue
@@ -347,7 +405,11 @@ def parse_devices(raw: str | None) -> dict[str, DeviceConfig]:
 
             devices[address] = DeviceConfig(
                 address=address,
-                name=parts[1],
+                name=_display_name(
+                    address,
+                    parts[1],
+                    use_friendly_names,
+                ),
                 entity_type=_parse_device_type(parts[2]),
             )
 
@@ -355,6 +417,110 @@ def parse_devices(raw: str | None) -> dict[str, DeviceConfig]:
 
         raise ConfigError(
             f"Invalid X10_DEVICES entry '{entry}'."
+        )
+
+    return devices
+
+
+def parse_device_config(
+    raw: object,
+    use_friendly_names: bool = True,
+) -> dict[str, DeviceConfig]:
+    """
+    Parse device configuration from the optional JSON config file.
+
+    Supported forms:
+
+    - "A1:Living Room Lamp:light,A2:Coffee Maker:switch"
+    - [{"address": "A1", "name": "Living Room Lamp", "type": "light"}]
+    - {"A1": "Living Room Lamp", "A2": {"name": "Coffee Maker", "type": "switch"}}
+    """
+
+    if raw is None:
+        return {}
+
+    if isinstance(raw, str):
+        return parse_devices(raw, use_friendly_names=use_friendly_names)
+
+    if isinstance(raw, list):
+        return _parse_device_list(raw, use_friendly_names)
+
+    if isinstance(raw, dict):
+        return _parse_device_mapping(raw, use_friendly_names)
+
+    raise ConfigError(
+        "Config file field 'devices' must be a string, list, or object."
+    )
+
+
+def _parse_device_list(
+    raw: list,
+    use_friendly_names: bool,
+) -> dict[str, DeviceConfig]:
+    devices: dict[str, DeviceConfig] = {}
+
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ConfigError(
+                "Config file device list entries must be objects."
+            )
+
+        address = _normalize_address(str(item.get("address", "")))
+        name = item.get("name")
+        entity_type = item.get("type", item.get("entity_type", "switch"))
+
+        devices[address] = DeviceConfig(
+            address=address,
+            name=_display_name(
+                address,
+                None if name is None else str(name),
+                use_friendly_names,
+            ),
+            entity_type=_parse_device_type(str(entity_type)),
+        )
+
+    return devices
+
+
+def _parse_device_mapping(
+    raw: dict,
+    use_friendly_names: bool,
+) -> dict[str, DeviceConfig]:
+    devices: dict[str, DeviceConfig] = {}
+
+    for raw_address, value in raw.items():
+        address = _normalize_address(str(raw_address))
+
+        if isinstance(value, str):
+            devices[address] = DeviceConfig(
+                address=address,
+                name=_display_name(
+                    address,
+                    value,
+                    use_friendly_names,
+                ),
+            )
+            continue
+
+        if isinstance(value, dict):
+            name = value.get("name")
+            entity_type = value.get(
+                "type",
+                value.get("entity_type", "switch"),
+            )
+            devices[address] = DeviceConfig(
+                address=address,
+                name=_display_name(
+                    address,
+                    None if name is None else str(name),
+                    use_friendly_names,
+                ),
+                entity_type=_parse_device_type(str(entity_type)),
+            )
+            continue
+
+        raise ConfigError(
+            "Config file device object values must be strings or objects."
         )
 
     return devices
@@ -427,7 +593,97 @@ def _parse_housecode_range(value: str) -> tuple[str, str]:
 ###############################################################################
 
 
+def _load_config_file(path: str | None) -> dict:
+    if path is None:
+        return {}
+
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(
+            f"BRIDGE_CONFIG_FILE points to an unreadable file '{path}': {exc}"
+        ) from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"BRIDGE_CONFIG_FILE '{path}' is not valid JSON: {exc}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"BRIDGE_CONFIG_FILE '{path}' must contain a JSON object."
+        )
+
+    return data
+
+
+def _file_bool(
+    data: dict,
+    key: str,
+    default: bool,
+) -> bool:
+    if key not in data:
+        return default
+
+    value = data[key]
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+
+    raise ConfigError(
+        f"Config file field '{key}' must be a boolean."
+    )
+
+
+def _devices_from_sources(
+    file_config: dict,
+    use_friendly_names: bool,
+) -> dict[str, DeviceConfig]:
+    has_devices = "devices" in file_config
+    has_x10_devices = "x10_devices" in file_config
+
+    if has_devices and has_x10_devices:
+        raise ConfigError(
+            "Set only one of 'devices' or 'x10_devices' in BRIDGE_CONFIG_FILE."
+        )
+
+    if has_devices:
+        return parse_device_config(
+            file_config["devices"],
+            use_friendly_names=use_friendly_names,
+        )
+
+    if has_x10_devices:
+        return parse_devices(
+            str(file_config["x10_devices"]),
+            use_friendly_names=use_friendly_names,
+        )
+
+    return parse_devices(
+        _get_env("X10_DEVICES"),
+        use_friendly_names=use_friendly_names,
+    )
+
+
 def load_config() -> Config:
+    config_file = _get_env("BRIDGE_CONFIG_FILE")
+    file_config = _load_config_file(config_file)
+    use_friendly_names = _file_bool(
+        file_config,
+        "use_friendly_names",
+        _get_bool("X10_USE_FRIENDLY_NAMES", True),
+    )
 
     config = Config(
 
@@ -477,8 +733,18 @@ def load_config() -> Config:
             DEFAULT_LOG_LEVEL,
         ),
 
-        devices=parse_devices(
-            _get_env("X10_DEVICES")
+        config_file=config_file,
+
+        config_reload_interval_seconds=_get_float(
+            "BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS",
+            DEFAULT_CONFIG_RELOAD_INTERVAL_SECONDS,
+        ),
+
+        use_friendly_names=use_friendly_names,
+
+        devices=_devices_from_sources(
+            file_config,
+            use_friendly_names,
         ),
 
         discovery_cleanup=_get_bool(

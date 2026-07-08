@@ -23,6 +23,8 @@ This project follows semantic versioning once releases begin.
   stable `default_entity_id` hints.
 - Verified MQTT TLS support with system trust, custom CA files, optional mutual
   TLS, Docker-secret-compatible password files, and Mosquitto integration tests.
+- Optional JSON bridge config file with reloadable device display names and
+  `use_friendly_names` support.
 
 ### Known Gaps
 

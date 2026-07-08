@@ -13,11 +13,11 @@ import json
 import os
 import signal
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
-from config import Config
+from config import Config, ConfigError, load_config
 from discovery import DiscoveryManager
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
 from models import (
@@ -85,6 +85,13 @@ class Bridge:
         started = time.monotonic()
         _LOG.info("Initializing bridge")
         self.config = config
+        self._config_file_path = (
+            Path(config.config_file) if config.config_file else None
+        )
+        self._config_file_signature = self._read_config_file_signature()
+        self._next_config_reload_check = (
+            time.monotonic() + config.config_reload_interval_seconds
+        )
         self.devices = {
             address: device
             for address, device in config.devices.items()
@@ -94,6 +101,16 @@ class Bridge:
             "Loaded %d configured X10 device(s)",
             len(self.devices),
         )
+        _LOG.info(
+            "Friendly names enabled=%s",
+            config.use_friendly_names,
+        )
+        if self._config_file_path is not None:
+            _LOG.info(
+                "Config file watching enabled path=%s interval=%.3fs",
+                self._config_file_path,
+                config.config_reload_interval_seconds,
+            )
         self.parser = parser or ProtocolParser()
         _LOG.info("Protocol parser ready")
         self.state = state or StateManager(
@@ -216,6 +233,7 @@ class Bridge:
         self.start()
 
         while self._running:
+            self._check_config_file_reload()
             self._write_health(
                 "running" if self.state.available else "starting"
             )
@@ -662,6 +680,96 @@ class Bridge:
                 self._health_file,
                 exc,
             )
+
+    def _check_config_file_reload(
+        self,
+        force: bool = False,
+    ) -> None:
+        if self._config_file_path is None:
+            return
+
+        now = time.monotonic()
+
+        if not force and now < self._next_config_reload_check:
+            return
+
+        self._next_config_reload_check = (
+            now + self.config.config_reload_interval_seconds
+        )
+        signature = self._read_config_file_signature()
+
+        if not force and signature == self._config_file_signature:
+            return
+
+        try:
+            new_config = load_config()
+        except ConfigError as exc:
+            _LOG.warning(
+                "Config file reload skipped path=%s error=%s",
+                self._config_file_path,
+                exc,
+            )
+            return
+
+        self._apply_runtime_config(new_config)
+        self._config_file_signature = signature
+
+    def _apply_runtime_config(
+        self,
+        new_config: Config,
+    ) -> None:
+        old_devices = self.devices
+        old_use_friendly_names = self.config.use_friendly_names
+        new_devices = {
+            address: device
+            for address, device in new_config.devices.items()
+            if self._address_allowed_by_config(address)
+        }
+
+        if (
+            new_devices == old_devices
+            and new_config.use_friendly_names == old_use_friendly_names
+        ):
+            _LOG.info("Config file reloaded with no runtime changes")
+            return
+
+        self.config = replace(
+            self.config,
+            devices=new_config.devices,
+            use_friendly_names=new_config.use_friendly_names,
+        )
+        self.devices = new_devices
+        _LOG.info(
+            "Config file reloaded devices=%d friendly_names=%s",
+            len(self.devices),
+            self.config.use_friendly_names,
+        )
+
+        if self.clients.mqtt.connected:
+            published = self._publish_current_discovery()
+            cleanup = self._run_discovery_cleanup(force=False)
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
+            _LOG.info(
+                "Config reload discovery updated published=%d cleanup_success=%s",
+                published,
+                cleanup.get("success"),
+            )
+
+    def _read_config_file_signature(
+        self,
+    ) -> tuple[int, int] | None:
+        if self._config_file_path is None:
+            return None
+
+        try:
+            stat = self._config_file_path.stat()
+        except OSError:
+            return None
+
+        return (stat.st_mtime_ns, stat.st_size)
 
     def _device_config(
         self,

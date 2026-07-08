@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -154,6 +155,87 @@ class ConfigTests(unittest.TestCase):
         ):
             with self.assertRaises(ConfigError):
                 load_config()
+
+    def test_config_file_devices_and_friendly_names_are_parsed(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            json.dump(
+                {
+                    "use_friendly_names": True,
+                    "devices": [
+                        {
+                            "address": "A1",
+                            "name": "Living Room Lamp",
+                            "type": "light",
+                        }
+                    ],
+                },
+                config_file,
+            )
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                config = load_config()
+
+        self.assertTrue(config.use_friendly_names)
+        self.assertEqual(config.devices["A1"].name, "Living Room Lamp")
+
+    def test_config_file_can_disable_friendly_names(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            json.dump(
+                {
+                    "use_friendly_names": False,
+                    "devices": [
+                        {
+                            "address": "A1",
+                            "name": "Living Room Lamp",
+                            "type": "light",
+                        }
+                    ],
+                },
+                config_file,
+            )
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                config = load_config()
+
+        self.assertFalse(config.use_friendly_names)
+        self.assertEqual(config.devices["A1"].name, "A1")
+
+    def test_env_can_disable_friendly_names_for_x10_devices(self):
+        with patch.dict(
+            os.environ,
+            {
+                "X10_USE_FRIENDLY_NAMES": "false",
+                "X10_DEVICES": "A1:Living Room Lamp:light",
+            },
+            clear=True,
+        ):
+            config = load_config()
+
+        self.assertFalse(config.use_friendly_names)
+        self.assertEqual(config.devices["A1"].name, "A1")
+
+    def test_invalid_config_file_json_is_rejected(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            config_file.write("{not-json")
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                with self.assertRaises(ConfigError):
+                    load_config()
 
 
 if __name__ == "__main__":
