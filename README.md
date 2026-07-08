@@ -70,8 +70,9 @@ image: ghcr.io/monsterray/mochad-mqtt-bridge:0.1.0
 
 No GitHub Container Registry publishing workflow is enabled yet.
 
-The container runs as a non-root user and stores mutable discovery registry data
-under `/config`.
+The container starts as root only long enough to prepare writable paths, then
+drops privileges before starting the bridge. Application files remain owned by
+`root:root`; only `/config` is owned by the runtime `PUID:PGID`.
 
 ## Configuration
 
@@ -80,6 +81,10 @@ Important environment variables:
 ```text
 MOCHAD_HOST
 MOCHAD_PORT
+PUID
+PGID
+TZ
+UMASK
 MQTT_HOST
 MQTT_PORT
 MQTT_USERNAME
@@ -107,6 +112,11 @@ BRIDGE_DEBUG_WIRE
 
 The variables above match the bridge runtime configuration in `config.py`.
 `BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check.
+
+`PUID`, `PGID`, `TZ`, and `UMASK` control container runtime permissions. The
+defaults are `PUID=911`, `PGID=911`, `TZ=UTC`, and `UMASK=022`. If Compose
+`user:` is set, Docker bypasses this root initialization step; in that mode,
+pre-own mounted volumes and provide any required `group_add` values yourself.
 
 `MOCHAD_PORT` should point at the main mochad TCP listener. The default is
 `1099`, and the bridge expects newline-delimited mochad events and diagnostic

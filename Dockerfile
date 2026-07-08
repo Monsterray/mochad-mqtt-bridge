@@ -19,16 +19,21 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN addgroup -S bridge \
-    && adduser -S -G bridge bridge \
-    && mkdir -p /config \
-    && chown -R bridge:bridge /config
+RUN apk add --no-cache \
+    su-exec \
+    tini \
+    tzdata \
+    && mkdir -p /config
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-compile -r requirements.txt
 
-COPY --chown=bridge:bridge . .
+COPY . .
 
+ENV PUID=911
+ENV PGID=911
+ENV TZ=UTC
+ENV UMASK=022
 ENV MOCHAD_HOST=mochad
 ENV MOCHAD_PORT=1099
 ENV MQTT_HOST=mosquitto
@@ -50,7 +55,8 @@ ENV BRIDGE_DEBUG_WIRE=false
 
 VOLUME ["/config"]
 
-USER bridge
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s \
             --timeout=5s \
@@ -58,4 +64,5 @@ HEALTHCHECK --interval=30s \
             --retries=3 \
 CMD python /app/healthcheck.py || exit 1
 
+ENTRYPOINT ["/sbin/tini","--","/app/docker-entrypoint.sh"]
 CMD ["python", "mqtt_mochad_bridge.py"]
