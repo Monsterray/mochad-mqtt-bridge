@@ -49,6 +49,44 @@ class FakeMochadClient:
 
 
 class ConfigReloadTests(unittest.TestCase):
+    def test_bridge_creates_missing_runtime_config_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "bridge.json"
+            registry_path = Path(directory) / "discovery_registry.json"
+
+            with patch.dict(
+                os.environ,
+                {
+                    "BRIDGE_CONFIG_FILE": str(config_path),
+                    "DISCOVERY_REGISTRY_PATH": str(registry_path),
+                    "X10_DEVICES": "A1:Living Room Lamp:light:2:150",
+                },
+                clear=True,
+            ):
+                config = load_config()
+                Bridge(
+                    config,
+                    mqtt_client=FakeMqttClient(),
+                    mochad_client=FakeMochadClient(),
+                )
+
+            bridge_config = json.loads(
+                config_path.read_text(encoding="utf-8")
+            )
+            registry = json.loads(
+                registry_path.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            bridge_config["devices"][0]["address"],
+            "A1",
+        )
+        self.assertEqual(
+            bridge_config["devices"][0]["command_repeats"],
+            2,
+        )
+        self.assertEqual(registry, {"topics": []})
+
     def test_bridge_reloads_config_file_and_republishes_discovery(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "bridge.json"

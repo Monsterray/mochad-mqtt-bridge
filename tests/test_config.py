@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from config import ConfigError, load_config
+from config import (
+    ConfigError,
+    create_config_file_if_missing,
+    load_config,
+)
 
 
 class ConfigTests(unittest.TestCase):
@@ -183,6 +187,60 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.use_friendly_names)
         self.assertEqual(config.devices["A1"].name, "Living Room Lamp")
 
+    def test_missing_optional_config_file_uses_environment_devices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing_config = os.path.join(directory, "bridge.json")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "BRIDGE_CONFIG_FILE": missing_config,
+                    "X10_DEVICES": "A1:Living Room Lamp:light",
+                },
+                clear=True,
+            ):
+                config = load_config()
+
+        self.assertEqual(config.config_file, missing_config)
+        self.assertEqual(config.devices["A1"].name, "Living Room Lamp")
+
+    def test_missing_config_file_can_be_created_from_environment_devices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "bridge.json")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "BRIDGE_CONFIG_FILE": config_path,
+                    "X10_USE_FRIENDLY_NAMES": "true",
+                    "X10_DEVICES": "A1:Living Room Lamp:light:3:150",
+                },
+                clear=True,
+            ):
+                config = load_config()
+
+            self.assertTrue(create_config_file_if_missing(config))
+            self.assertFalse(create_config_file_if_missing(config))
+
+            with open(config_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(
+            payload,
+            {
+                "devices": [
+                    {
+                        "address": "A1",
+                        "command_repeat_delay_ms": 150,
+                        "command_repeats": 3,
+                        "name": "Living Room Lamp",
+                        "type": "light",
+                    }
+                ],
+                "use_friendly_names": True,
+            },
+        )
+
     def test_config_file_can_disable_friendly_names(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
             json.dump(
@@ -223,6 +281,58 @@ class ConfigTests(unittest.TestCase):
 
         self.assertFalse(config.use_friendly_names)
         self.assertEqual(config.devices["A1"].name, "A1")
+
+    def test_env_devices_can_configure_command_repeats(self):
+        with patch.dict(
+            os.environ,
+            {
+                "X10_DEVICES": "A1:Living Room Lamp:light:3:200",
+            },
+            clear=True,
+        ):
+            config = load_config()
+
+        self.assertEqual(config.devices["A1"].command_repeats, 3)
+        self.assertEqual(config.devices["A1"].command_repeat_delay_ms, 200)
+
+    def test_json_devices_can_configure_command_repeats(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            json.dump(
+                {
+                    "devices": [
+                        {
+                            "address": "A1",
+                            "name": "Living Room Lamp",
+                            "type": "light",
+                            "command_repeats": 2,
+                            "command_repeat_delay_ms": 150,
+                        }
+                    ],
+                },
+                config_file,
+            )
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                config = load_config()
+
+        self.assertEqual(config.devices["A1"].command_repeats, 2)
+        self.assertEqual(config.devices["A1"].command_repeat_delay_ms, 150)
+
+    def test_invalid_command_repeats_are_rejected(self):
+        with patch.dict(
+            os.environ,
+            {
+                "X10_DEVICES": "A1:Living Room Lamp:light:0:150",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ConfigError):
+                load_config()
 
     def test_invalid_config_file_json_is_rejected(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:

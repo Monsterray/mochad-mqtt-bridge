@@ -1,9 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 from bridge import Bridge
 from config import Config, MqttTlsConfig
 from mqtt_client import MqttCommandMessage
-from models import BridgeCommand
+from models import BridgeCommand, DeviceConfig, DeviceType
 
 
 class FakeMqttClient:
@@ -12,6 +13,7 @@ class FakeMqttClient:
     def __init__(self):
         self.discovery_messages = []
         self.states = []
+        self.attributes = []
 
     def set_command_callback(self, callback):
         self.command_callback = callback
@@ -30,6 +32,9 @@ class FakeMqttClient:
 
     def publish_state(self, device, state, retain=True):
         self.states.append((device, state, retain))
+
+    def publish_attributes(self, device, payload, retain=True):
+        self.attributes.append((device, payload, retain))
 
 
 class FakeMochadClient:
@@ -116,6 +121,82 @@ class DeviceCommandRoutingTests(unittest.TestCase):
 
         self.assertIn("rf A1 on", mochad.sent_lines)
         self.assertEqual(mqtt.states[-1][0], "A1")
+        self.assertEqual(mqtt.attributes[-1][0], "A1")
+        self.assertEqual(
+            mqtt.attributes[-1][1]["last_command_sent"],
+            "ON",
+        )
+        self.assertTrue(mqtt.attributes[-1][1]["optimistic"])
+
+    def test_repeats_on_off_commands_for_configured_device(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(
+                devices={
+                    "A1": DeviceConfig(
+                        address="A1",
+                        name="Lamp",
+                        entity_type=DeviceType.LIGHT,
+                        command_repeats=3,
+                        command_repeat_delay_ms=150,
+                    )
+                }
+            ),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        with patch("bridge.time.sleep") as sleep:
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A1",
+                    payload="OFF",
+                    topic="x10/A1/command",
+                )
+            )
+
+        self.assertEqual(
+            mochad.sent_lines,
+            [
+                "rf A1 off",
+                "rf A1 off",
+                "rf A1 off",
+            ],
+        )
+        self.assertEqual(sleep.call_count, 2)
+        sleep.assert_called_with(0.15)
+
+    def test_does_not_repeat_dim_or_bright_commands(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(
+                devices={
+                    "A1": DeviceConfig(
+                        address="A1",
+                        name="Lamp",
+                        entity_type=DeviceType.LIGHT,
+                        command_repeats=3,
+                        command_repeat_delay_ms=150,
+                    )
+                }
+            ),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        with patch("bridge.time.sleep") as sleep:
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A1",
+                    payload="DIM",
+                    topic="x10/A1/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, ["rf A1 dim"])
+        sleep.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

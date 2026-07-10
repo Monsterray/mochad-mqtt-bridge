@@ -30,8 +30,13 @@ DEFAULT_MQTT_PORT = 1883
 
 DEFAULT_DISCOVERY_PREFIX = "homeassistant"
 DEFAULT_DISCOVERY_REGISTRY_PATH = "/config/discovery_registry.json"
+DEFAULT_CONFIG_FILE = "/config/bridge.json"
 DEFAULT_BASE_TOPIC = "x10"
 DEFAULT_CONFIG_RELOAD_INTERVAL_SECONDS = 5.0
+DEFAULT_COMMAND_REPEATS = 1
+DEFAULT_COMMAND_REPEAT_DELAY_MS = 150
+MAX_COMMAND_REPEATS = 5
+MAX_COMMAND_REPEAT_DELAY_MS = 5000
 
 DEFAULT_LOG_LEVEL = "INFO"
 
@@ -50,6 +55,10 @@ LOG_FORMAT = (
 
 class ConfigError(RuntimeError):
     """Raised when configuration is invalid."""
+
+
+class ConfigFileWriteError(RuntimeError):
+    """Raised when an optional runtime config file cannot be created."""
 
 
 ###############################################################################
@@ -344,6 +353,68 @@ def _display_name(
     return name if name else address
 
 
+def _parse_bounded_int(
+    value: object,
+    field_name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"{field_name} must be an integer. Got '{value}'."
+        ) from exc
+
+    if parsed < minimum or parsed > maximum:
+        raise ConfigError(
+            f"{field_name} must be between {minimum} and {maximum}. "
+            f"Got '{value}'."
+        )
+
+    return parsed
+
+
+def _parse_command_repeats(
+    value: object,
+) -> int:
+    return _parse_bounded_int(
+        value,
+        "command_repeats",
+        1,
+        MAX_COMMAND_REPEATS,
+    )
+
+
+def _parse_command_repeat_delay_ms(
+    value: object,
+) -> int:
+    return _parse_bounded_int(
+        value,
+        "command_repeat_delay_ms",
+        0,
+        MAX_COMMAND_REPEAT_DELAY_MS,
+    )
+
+
+def _device_config(
+    address: str,
+    name: str,
+    entity_type: DeviceType = DeviceType.SWITCH,
+    command_repeats: object = DEFAULT_COMMAND_REPEATS,
+    command_repeat_delay_ms: object = DEFAULT_COMMAND_REPEAT_DELAY_MS,
+) -> DeviceConfig:
+    return DeviceConfig(
+        address=address,
+        name=name,
+        entity_type=entity_type,
+        command_repeats=_parse_command_repeats(command_repeats),
+        command_repeat_delay_ms=_parse_command_repeat_delay_ms(
+            command_repeat_delay_ms
+        ),
+    )
+
+
 def parse_devices(
     raw: str | None,
     use_friendly_names: bool = True,
@@ -372,12 +443,14 @@ def parse_devices(
         #
         # A1:Living Room Lamp:light
         #
+        # A1:Living Room Lamp:light:3:150
+        #
 
         if len(parts) == 1:
 
             address = _normalize_address(parts[0])
 
-            devices[address] = DeviceConfig(
+            devices[address] = _device_config(
                 address=address,
                 name=address,
             )
@@ -388,7 +461,7 @@ def parse_devices(
 
             address = _normalize_address(parts[0])
 
-            devices[address] = DeviceConfig(
+            devices[address] = _device_config(
                 address=address,
                 name=_display_name(
                     address,
@@ -399,11 +472,22 @@ def parse_devices(
 
             continue
 
-        if len(parts) == 3:
+        if len(parts) in {3, 4, 5}:
 
             address = _normalize_address(parts[0])
 
-            devices[address] = DeviceConfig(
+            repeats = (
+                parts[3]
+                if len(parts) >= 4 and parts[3]
+                else DEFAULT_COMMAND_REPEATS
+            )
+            repeat_delay_ms = (
+                parts[4]
+                if len(parts) >= 5 and parts[4]
+                else DEFAULT_COMMAND_REPEAT_DELAY_MS
+            )
+
+            devices[address] = _device_config(
                 address=address,
                 name=_display_name(
                     address,
@@ -411,6 +495,8 @@ def parse_devices(
                     use_friendly_names,
                 ),
                 entity_type=_parse_device_type(parts[2]),
+                command_repeats=repeats,
+                command_repeat_delay_ms=repeat_delay_ms,
             )
 
             continue
@@ -468,8 +554,16 @@ def _parse_device_list(
         address = _normalize_address(str(item.get("address", "")))
         name = item.get("name")
         entity_type = item.get("type", item.get("entity_type", "switch"))
+        repeats = item.get(
+            "command_repeats",
+            item.get("repeats", DEFAULT_COMMAND_REPEATS),
+        )
+        repeat_delay_ms = item.get(
+            "command_repeat_delay_ms",
+            item.get("repeat_delay_ms", DEFAULT_COMMAND_REPEAT_DELAY_MS),
+        )
 
-        devices[address] = DeviceConfig(
+        devices[address] = _device_config(
             address=address,
             name=_display_name(
                 address,
@@ -477,6 +571,8 @@ def _parse_device_list(
                 use_friendly_names,
             ),
             entity_type=_parse_device_type(str(entity_type)),
+            command_repeats=repeats,
+            command_repeat_delay_ms=repeat_delay_ms,
         )
 
     return devices
@@ -492,7 +588,7 @@ def _parse_device_mapping(
         address = _normalize_address(str(raw_address))
 
         if isinstance(value, str):
-            devices[address] = DeviceConfig(
+            devices[address] = _device_config(
                 address=address,
                 name=_display_name(
                     address,
@@ -508,7 +604,15 @@ def _parse_device_mapping(
                 "type",
                 value.get("entity_type", "switch"),
             )
-            devices[address] = DeviceConfig(
+            repeats = value.get(
+                "command_repeats",
+                value.get("repeats", DEFAULT_COMMAND_REPEATS),
+            )
+            repeat_delay_ms = value.get(
+                "command_repeat_delay_ms",
+                value.get("repeat_delay_ms", DEFAULT_COMMAND_REPEAT_DELAY_MS),
+            )
+            devices[address] = _device_config(
                 address=address,
                 name=_display_name(
                     address,
@@ -516,6 +620,8 @@ def _parse_device_mapping(
                     use_friendly_names,
                 ),
                 entity_type=_parse_device_type(str(entity_type)),
+                command_repeats=repeats,
+                command_repeat_delay_ms=repeat_delay_ms,
             )
             continue
 
@@ -597,8 +703,12 @@ def _load_config_file(path: str | None) -> dict:
     if path is None:
         return {}
 
+    config_path = Path(path)
+    if not config_path.exists():
+        return {}
+
     try:
-        raw = Path(path).read_text(encoding="utf-8")
+        raw = config_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(
             f"BRIDGE_CONFIG_FILE points to an unreadable file '{path}': {exc}"
@@ -617,6 +727,64 @@ def _load_config_file(path: str | None) -> dict:
         )
 
     return data
+
+
+def _device_to_file_payload(device: DeviceConfig) -> dict:
+    return {
+        "address": device.address,
+        "name": device.name,
+        "type": device.entity_type.name.lower(),
+        "command_repeats": device.command_repeats,
+        "command_repeat_delay_ms": device.command_repeat_delay_ms,
+    }
+
+
+def _config_file_payload(config: Config) -> dict:
+    payload: dict[str, object] = {
+        "use_friendly_names": config.use_friendly_names,
+        "devices": [
+            _device_to_file_payload(device)
+            for device in sorted(
+                config.devices.values(),
+                key=lambda item: item.address,
+            )
+        ],
+    }
+
+    return payload
+
+
+def create_config_file_if_missing(config: Config) -> bool:
+    """
+    Create the optional editable bridge config file from active config.
+
+    Only bridge-owned device settings are written. Transport credentials,
+    passwords, TLS key paths, and broker settings stay environment-only.
+    """
+
+    if config.config_file is None:
+        return False
+
+    config_path = Path(config.config_file)
+    if config_path.exists():
+        return False
+
+    payload = _config_file_payload(config)
+    temporary_path = config_path.with_suffix(config_path.suffix + ".tmp")
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(config_path)
+    except OSError as exc:
+        raise ConfigFileWriteError(
+            f"Could not create bridge config file {config_path}: {exc}"
+        ) from exc
+
+    return True
 
 
 def _file_bool(
@@ -677,7 +845,7 @@ def _devices_from_sources(
 
 
 def load_config() -> Config:
-    config_file = _get_env("BRIDGE_CONFIG_FILE")
+    config_file = _get_env("BRIDGE_CONFIG_FILE", DEFAULT_CONFIG_FILE)
     file_config = _load_config_file(config_file)
     use_friendly_names = _file_bool(
         file_config,

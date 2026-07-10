@@ -17,7 +17,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
-from config import Config, ConfigError, load_config
+from config import (
+    Config,
+    ConfigError,
+    ConfigFileWriteError,
+    create_config_file_if_missing,
+    load_config,
+)
 from discovery import DiscoveryManager
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
 from models import (
@@ -28,6 +34,7 @@ from models import (
     DiscoveryMessage,
     LogUnknownEventAction,
     MochadDiagnostics,
+    PublishAttributesAction,
     PublishAvailabilityAction,
     PublishBridgeResponseAction,
     PublishDiscoveryAction,
@@ -46,7 +53,7 @@ from state import StateManager
 
 _LOG = logging.getLogger(__name__)
 
-DEFAULT_HEALTH_FILE = "/tmp/mqtt-mochad-bridge.health"
+DEFAULT_HEALTH_FILE = "/config/mqtt-mochad-bridge.health"
 
 
 COMMAND_PAYLOADS = {
@@ -59,6 +66,11 @@ COMMAND_PAYLOADS = {
 BRIDGE_COMMAND_ALIASES = {
     "PRUNE_ENTITIES": BridgeCommand.PRUNE_DISCOVERY,
     "PRUNE": BridgeCommand.PRUNE_DISCOVERY,
+}
+
+REPEATABLE_COMMANDS = {
+    Command.ON,
+    Command.OFF,
 }
 
 
@@ -164,6 +176,7 @@ class Bridge:
         self.discovery_registry = DiscoveryRegistry(
             config.discovery_registry_path
         )
+        self._ensure_runtime_config_files()
         self._mochad_diagnostics = MochadDiagnostics()
         _LOG.info(
             "Discovery cleanup enabled=%s registry_path=%s",
@@ -182,6 +195,30 @@ class Bridge:
             "Bridge initialized successfully elapsed=%.3fs",
             time.monotonic() - started,
         )
+
+    def _ensure_runtime_config_files(self) -> None:
+        try:
+            created = create_config_file_if_missing(self.config)
+        except ConfigFileWriteError as exc:
+            _LOG.warning("%s", exc)
+        else:
+            if created:
+                _LOG.info(
+                    "Created editable bridge config file path=%s",
+                    self.config.config_file,
+                )
+
+        if self.config.config_file is not None:
+            try:
+                created = self.discovery_registry.create_if_missing()
+            except DiscoveryRegistryError as exc:
+                _LOG.warning("%s", exc)
+            else:
+                if created:
+                    _LOG.info(
+                        "Created discovery registry file path=%s",
+                        self.config.discovery_registry_path,
+                    )
 
     def start(self) -> None:
         started = time.monotonic()
@@ -304,6 +341,19 @@ class Bridge:
             )
             return
 
+        if isinstance(action, PublishAttributesAction):
+            _LOG.info(
+                "MQTT publish attributes address=%s retain=%s",
+                action.address,
+                action.retain,
+            )
+            self.clients.mqtt.publish_attributes(
+                action.address,
+                action.payload,
+                retain=action.retain,
+            )
+            return
+
         if isinstance(action, PublishDiscoveryAction):
             device = self._device_config(action.address)
 
@@ -372,17 +422,7 @@ class Bridge:
             return
 
         if isinstance(action, SendDeviceCommandAction):
-            _LOG.debug(
-                "Executing SendDeviceCommandAction address=%s command=%s",
-                action.address,
-                action.command.name,
-            )
-            self.clients.mochad.send_line(
-                encode_rf_command(
-                    action.address,
-                    action.command,
-                )
-            )
+            self._send_device_command(action)
             return
 
         if isinstance(action, RequestStatusAction):
@@ -399,6 +439,35 @@ class Bridge:
         raise TypeError(
             f"Unhandled bridge action {type(action).__name__}."
         )
+
+    def _send_device_command(
+        self,
+        action: SendDeviceCommandAction,
+    ) -> None:
+        device = self._device_config(action.address)
+        repeats = (
+            device.command_repeats
+            if action.command in REPEATABLE_COMMANDS
+            else 1
+        )
+        delay_seconds = device.command_repeat_delay_ms / 1000.0
+        line = encode_rf_command(
+            action.address,
+            action.command,
+        )
+
+        for attempt in range(1, repeats + 1):
+            _LOG.debug(
+                "Executing SendDeviceCommandAction address=%s command=%s attempt=%d repeats=%d",
+                action.address,
+                action.command.name,
+                attempt,
+                repeats,
+            )
+            self.clients.mochad.send_line(line)
+
+            if attempt < repeats and delay_seconds > 0:
+                time.sleep(delay_seconds)
 
     def _wire_callbacks(self) -> None:
         _LOG.info("Wiring bridge callbacks")

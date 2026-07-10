@@ -132,14 +132,29 @@ Example devices:
 X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
 ```
 
+Optional command repeat settings can be appended per device:
+
+```text
+X10_DEVICES=A1:Living Room Lamp:light:3:150,A2:Coffee Maker:switch:1:150
+```
+
+The fourth field is the command repeat count and defaults to `1`. The fifth
+field is the delay between repeats in milliseconds and defaults to `150`.
+Repeats are bridge-side reliability tuning only; Home Assistant discovery is
+unchanged. The bridge repeats only `ON` and `OFF` commands. `DIM` and `BRIGHT`
+remain single-shot so brightness does not move farther than requested.
+
 Friendly names are enabled by default and are used only for Home Assistant
 display names. Set `X10_USE_FRIENDLY_NAMES=false` to make discovered entity
 names use stable X10 addresses such as `A1`.
 
-For runtime-editable device names, set `BRIDGE_CONFIG_FILE` to a JSON file
-inside the container, for example `/config/bridge.json`. The bridge checks the
-file every `BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS` seconds and republishes
-Home Assistant discovery when device names or configured devices change.
+Runtime-editable bridge files live under `/config`. By default
+`BRIDGE_CONFIG_FILE` points to `/config/bridge.json`. If the file does not
+exist on startup, the bridge creates it from the active environment-derived
+device settings. Existing files are never overwritten. The bridge checks the
+file every
+`BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS` seconds and republishes Home Assistant
+discovery when device names or configured devices change.
 
 Example `bridge.json`:
 
@@ -150,7 +165,9 @@ Example `bridge.json`:
     {
       "address": "A1",
       "name": "Living Room Lamp",
-      "type": "light"
+      "type": "light",
+      "command_repeats": 3,
+      "command_repeat_delay_ms": 150
     },
     {
       "address": "A2",

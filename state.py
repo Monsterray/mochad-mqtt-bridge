@@ -23,6 +23,7 @@ from models import (
     DeviceState,
     HouseEvent,
     LogUnknownEventAction,
+    PublishAttributesAction,
     PublishAvailabilityAction,
     PublishDiscoveryAction,
     PublishEventAction,
@@ -138,6 +139,16 @@ class StateManager:
                 SendDeviceCommandAction(
                     address=state.address,
                     command=command,
+                )
+            )
+            actions.append(
+                PublishAttributesAction(
+                    address=state.address,
+                    payload={
+                        "last_command_sent": command.name,
+                        "optimistic": self._optimistic_updates,
+                    },
+                    retain=True,
                 )
             )
 

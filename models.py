@@ -127,6 +127,10 @@ class DeviceConfig:
         )
     )
 
+    command_repeats: int = 1
+
+    command_repeat_delay_ms: int = 150
+
 ###############################################################################
 # Runtime State
 ###############################################################################
@@ -424,6 +428,16 @@ class PublishStateAction(BridgeAction):
 class PublishEventAction(BridgeAction):
 
     event: DeviceEvent
+
+
+@dataclass(slots=True, frozen=True)
+class PublishAttributesAction(BridgeAction):
+
+    address: str
+
+    payload: dict
+
+    retain: bool = True
 
 
 @dataclass(slots=True, frozen=True)

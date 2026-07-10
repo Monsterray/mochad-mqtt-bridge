@@ -46,6 +46,13 @@ class DiscoveryRegistry:
             if isinstance(topic, str) and topic.strip()
         }
 
+    def create_if_missing(self) -> bool:
+        if self.path.exists():
+            return False
+
+        self.save(set())
+        return True
+
     def save(self, topics: Iterable[str]) -> None:
         payload = {
             "topics": sorted(set(topics)),
