@@ -49,6 +49,28 @@ class FakePahoClient:
 
 
 class MqttClientRoutingTests(unittest.TestCase):
+    def test_device_command_topic_routes_to_device_callback(self):
+        fake = FakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+        device_messages = []
+        bridge_messages = []
+        client.set_command_callback(device_messages.append)
+        client.set_bridge_command_callback(bridge_messages.append)
+
+        client._on_message(
+            fake,
+            None,
+            FakeMessage("x10/A1/command", b"ON"),
+        )
+
+        self.assertEqual(len(device_messages), 1)
+        self.assertEqual(device_messages[0].device, "A1")
+        self.assertEqual(device_messages[0].payload, "ON")
+        self.assertEqual(bridge_messages, [])
+
     def test_bridge_command_topic_routes_to_bridge_callback_first(self):
         fake = FakePahoClient()
         client = MqttClient(

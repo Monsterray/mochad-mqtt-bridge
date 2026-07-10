@@ -429,6 +429,13 @@ class MqttClient:
             errors="replace",
         ).strip()
 
+        if self.debug_wire:
+            _LOG.info(
+                "MQTT message received topic=%s payload=%s",
+                message.topic,
+                payload,
+            )
+
         if self._handle_bridge_command_message(message.topic, payload):
             return
 

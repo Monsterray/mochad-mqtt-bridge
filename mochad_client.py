@@ -130,6 +130,9 @@ class MochadClient:
         if sock is None:
             raise ConnectionError("mochad is not connected.")
 
+        if self.debug_wire:
+            _LOG.info("mochad tcp write line=%s", line)
+
         sock.sendall((line + "\n").encode("utf-8"))
 
     def request_status(self) -> None:
