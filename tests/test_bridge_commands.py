@@ -43,6 +43,9 @@ class FakeMqttClient:
     def publish_event(self, device, payload, retain=False):
         self.events.append((device, payload, retain))
 
+    def connect(self):
+        self.connected = True
+
     def publish_status(self, payload, retain=True, qos=0, wait=False):
         self.status_payloads.append((payload, retain, qos, wait))
 
@@ -72,6 +75,9 @@ class FakeMochadClient:
 
     def send_line(self, line):
         self.sent_lines.append(line)
+
+    def start(self):
+        self.connected = True
 
     def stop(self):
         self.connected = False
@@ -357,6 +363,49 @@ class BridgeShutdownTests(unittest.TestCase):
 
         self.assertEqual(mqtt.status_payloads, [])
         self.assertEqual(mqtt.availability, [])
+
+
+class BridgeDegradedModeTests(unittest.TestCase):
+    def test_drops_mqtt_publish_actions_while_disconnected(self):
+        mqtt = FakeMqttClient()
+        mqtt.connected = False
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=FakeMochadClient(),
+        )
+
+        bridge._on_mochad_line(
+            "07/10 15:28:31 Tx RF HouseUnit: A1 Func: On"
+        )
+
+        self.assertEqual(mqtt.events, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertGreaterEqual(
+            bridge._bridge_status_payload()["dropped_mqtt_publishes"],
+            1,
+        )
+
+    def test_start_continues_when_transports_are_degraded(self):
+        class FailingMqttClient(FakeMqttClient):
+            connected = False
+
+            def connect(self):
+                self.connected = False
+
+        mqtt = FailingMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge.start()
+
+        self.assertTrue(bridge._running)
+        self.assertTrue(mochad.connected)
+        self.assertFalse(mqtt.connected)
 
 
 if __name__ == "__main__":

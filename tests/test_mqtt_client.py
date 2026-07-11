@@ -58,6 +58,32 @@ class FakePahoClient:
         self.subscriptions.append((topic, qos))
 
 
+class AsyncFakePahoClient(FakePahoClient):
+    def __init__(self):
+        super().__init__()
+        self.reconnect_delay = None
+
+    def reconnect_delay_set(self, min_delay=1, max_delay=120):
+        self.calls.append("reconnect_delay_set")
+        self.reconnect_delay = (min_delay, max_delay)
+
+    def connect_async(self, host, port=1883, keepalive=60):
+        self.calls.append("connect_async")
+        self.connect_args = (host, port, keepalive)
+
+    def loop_start(self):
+        self.calls.append("loop_start")
+
+
+class FailingFakePahoClient(FakePahoClient):
+    def connect(self, host, port=1883, keepalive=60):
+        self.calls.append("connect")
+        raise OSError("broker down")
+
+    def loop_start(self):
+        self.calls.append("loop_start")
+
+
 class MqttClientRoutingTests(unittest.TestCase):
     def test_device_command_topic_routes_to_device_callback(self):
         fake = FakePahoClient()
@@ -159,6 +185,75 @@ class MqttClientRoutingTests(unittest.TestCase):
         )
 
         self.assertIsNone(fake.tls_context)
+
+    def test_connect_prefers_async_reconnecting_startup(self):
+        fake = AsyncFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            reconnect_min_delay=2,
+            reconnect_max_delay=10,
+            client_factory=lambda client_id: fake,
+        )
+
+        client.connect()
+
+        self.assertEqual(
+            fake.calls,
+            [
+                "reconnect_delay_set",
+                "connect_async",
+                "loop_start",
+            ],
+        )
+        self.assertEqual(fake.reconnect_delay, (2, 10))
+        self.assertEqual(fake.connect_args, ("mosquitto", 1883, 60))
+
+    def test_broker_down_startup_does_not_raise(self):
+        fake = FailingFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+
+        client.connect()
+
+        self.assertEqual(fake.calls, ["connect", "loop_start"])
+        self.assertFalse(client.connected)
+
+    def test_later_broker_appearance_restores_subscription_and_callback(self):
+        fake = AsyncFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+        connected = []
+        client.set_connect_callback(lambda: connected.append(True))
+        client.connect()
+
+        client._on_connect(fake, None, None, 0)
+
+        self.assertTrue(client.connected)
+        self.assertEqual(fake.subscriptions, [("x10/+/command", 0)])
+        self.assertEqual(connected, [True])
+
+    def test_broker_restart_marks_disconnected_then_resubscribes(self):
+        fake = AsyncFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+
+        client._on_connect(fake, None, None, 0)
+        self.assertTrue(client.connected)
+        client._on_disconnect(fake, None, 0)
+        self.assertFalse(client.connected)
+        client._on_connect(fake, None, None, 0)
+        self.assertTrue(client.connected)
+
+        self.assertEqual(
+            fake.subscriptions,
+            [("x10/+/command", 0), ("x10/+/command", 0)],
+        )
 
     def test_publish_can_wait_for_delivery(self):
         fake = FakePahoClient()

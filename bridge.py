@@ -189,6 +189,7 @@ class Bridge:
 
         self._running = False
         self._stopping = False
+        self._dropped_mqtt_publishes = 0
         self._health_file = Path(
             os.getenv("BRIDGE_HEALTH_FILE", DEFAULT_HEALTH_FILE)
         )
@@ -337,6 +338,9 @@ class Bridge:
         self,
         action: BridgeAction,
     ) -> None:
+        if self._drop_mqtt_publish_if_disconnected(action):
+            return
+
         if isinstance(action, PublishStateAction):
             _LOG.info(
                 "MQTT publish state address=%s state=%s retain=%s",
@@ -482,6 +486,36 @@ class Bridge:
         raise TypeError(
             f"Unhandled bridge action {type(action).__name__}."
         )
+
+    def _drop_mqtt_publish_if_disconnected(
+        self,
+        action: BridgeAction,
+    ) -> bool:
+        if not isinstance(
+            action,
+            (
+                PublishAttributesAction,
+                PublishAvailabilityAction,
+                PublishBridgeResponseAction,
+                PublishCommandEventAction,
+                PublishDiscoveryAction,
+                PublishEventAction,
+                PublishStateAction,
+                PublishStatusAction,
+            ),
+        ):
+            return False
+
+        if self.clients.mqtt.connected:
+            return False
+
+        self._dropped_mqtt_publishes += 1
+        _LOG.warning(
+            "Dropping MQTT publish while broker is disconnected action=%s dropped=%d",
+            type(action).__name__,
+            self._dropped_mqtt_publishes,
+        )
+        return True
 
     def _send_device_command(
         self,
@@ -1244,6 +1278,11 @@ class Bridge:
             ),
             "configured_devices": len(self.devices),
             "known_devices": len(snapshot),
+            "dropped_mqtt_publishes": getattr(
+                self,
+                "_dropped_mqtt_publishes",
+                0,
+            ),
             "mqtt": self._mqtt_status_payload(),
             "mochad": self._mochad_diagnostics_payload(),
         }
