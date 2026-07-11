@@ -15,6 +15,9 @@ class FakeMqttClient:
         self.states = []
         self.attributes = []
         self.events = []
+        self.status_payloads = []
+        self.availability = []
+        self.disconnected = False
 
     def set_command_callback(self, callback):
         self.command_callback = callback
@@ -40,12 +43,23 @@ class FakeMqttClient:
     def publish_event(self, device, payload, retain=False):
         self.events.append((device, payload, retain))
 
+    def publish_status(self, payload, retain=True, qos=0, wait=False):
+        self.status_payloads.append((payload, retain, qos, wait))
+
+    def publish_availability(self, online, retain=True, qos=0, wait=False):
+        self.availability.append((online, retain, qos, wait))
+
+    def disconnect(self):
+        self.connected = False
+        self.disconnected = True
+
 
 class FakeMochadClient:
     connected = True
 
     def __init__(self):
         self.sent_lines = []
+        self.stopped = False
 
     def set_line_callback(self, callback):
         self.line_callback = callback
@@ -58,6 +72,10 @@ class FakeMochadClient:
 
     def send_line(self, line):
         self.sent_lines.append(line)
+
+    def stop(self):
+        self.connected = False
+        self.stopped = True
 
 
 def minimal_config(
@@ -293,6 +311,53 @@ class DeviceCommandRoutingTests(unittest.TestCase):
         self.assertEqual(mqtt.states, [])
         self.assertEqual(len(mqtt.events), 1)
         self.assertEqual(mqtt.events[0][0], "A2")
+
+
+class BridgeShutdownTests(unittest.TestCase):
+    def test_stop_publishes_retained_shutdown_status_before_disconnect(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge.stop()
+
+        self.assertTrue(mochad.stopped)
+        self.assertTrue(mqtt.disconnected)
+        self.assertEqual(len(mqtt.status_payloads), 1)
+        status_payload, status_retain, status_qos, status_wait = (
+            mqtt.status_payloads[0]
+        )
+        self.assertEqual(status_payload["status"], "shutdown")
+        self.assertFalse(status_payload["available"])
+        self.assertTrue(status_payload["mqtt_connected"])
+        self.assertFalse(status_payload["mochad_connected"])
+        self.assertTrue(status_retain)
+        self.assertEqual(status_qos, 1)
+        self.assertTrue(status_wait)
+        self.assertEqual(
+            mqtt.availability,
+            [(False, True, 1, True)],
+        )
+
+    def test_intentional_mqtt_disconnect_does_not_publish_after_disconnect(self):
+        mqtt = FakeMqttClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=FakeMochadClient(),
+        )
+        bridge._stopping = True
+        mqtt.connected = False
+
+        bridge._on_mqtt_disconnected(reason_code=0)
+
+        self.assertEqual(mqtt.status_payloads, [])
+        self.assertEqual(mqtt.availability, [])
+
 
 if __name__ == "__main__":
     unittest.main()

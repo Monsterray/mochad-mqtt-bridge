@@ -10,6 +10,14 @@ class FakeMessage:
         self.payload = payload
 
 
+class FakePublishResult:
+    def __init__(self, client):
+        self.client = client
+
+    def wait_for_publish(self):
+        self.client.calls.append("wait_for_publish")
+
+
 class FakePahoClient:
     def __init__(self):
         self.on_connect = None
@@ -18,6 +26,7 @@ class FakePahoClient:
         self.subscriptions = []
         self.tls_context = None
         self.calls = []
+        self.published = []
 
     def username_pw_set(self, username, password=None):
         pass
@@ -42,7 +51,8 @@ class FakePahoClient:
         pass
 
     def publish(self, topic, payload=None, qos=0, retain=False):
-        pass
+        self.published.append((topic, payload, qos, retain))
+        return FakePublishResult(self)
 
     def subscribe(self, topic, qos=0):
         self.subscriptions.append((topic, qos))
@@ -149,6 +159,26 @@ class MqttClientRoutingTests(unittest.TestCase):
         )
 
         self.assertIsNone(fake.tls_context)
+
+    def test_publish_can_wait_for_delivery(self):
+        fake = FakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+
+        client.publish_status(
+            {"status": "shutdown"},
+            retain=True,
+            qos=1,
+            wait=True,
+        )
+
+        self.assertEqual(
+            fake.published,
+            [("x10/bridge/status", '{"status":"shutdown"}', 1, True)],
+        )
+        self.assertIn("wait_for_publish", fake.calls)
 
 
 if __name__ == "__main__":

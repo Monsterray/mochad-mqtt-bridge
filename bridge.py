@@ -188,6 +188,7 @@ class Bridge:
             _LOG.info("Wire debug logging enabled")
 
         self._running = False
+        self._stopping = False
         self._health_file = Path(
             os.getenv("BRIDGE_HEALTH_FILE", DEFAULT_HEALTH_FILE)
         )
@@ -255,17 +256,44 @@ class Bridge:
         started = time.monotonic()
         _LOG.info("Stopping bridge transports")
         self._running = False
+        self._stopping = True
         self.clients.mochad.stop()
         _LOG.info(
             "mochad client stopped elapsed=%.3fs",
             time.monotonic() - started,
         )
+        self._publish_shutdown_status()
         self.clients.mqtt.disconnect()
         _LOG.info(
             "MQTT client stopped elapsed=%.3fs",
             time.monotonic() - started,
         )
         self._write_health("stopped")
+
+    def _publish_shutdown_status(self) -> None:
+        if not self.clients.mqtt.connected:
+            _LOG.info("Skipping MQTT shutdown status because MQTT is disconnected")
+            return
+
+        payload = self._bridge_status_payload(
+            status="shutdown",
+            mqtt_connected=True,
+            mochad_connected=False,
+        )
+        payload["available"] = False
+        _LOG.info("MQTT publish shutdown status")
+        self.clients.mqtt.publish_status(
+            payload,
+            retain=True,
+            qos=1,
+            wait=True,
+        )
+        self.clients.mqtt.publish_availability(
+            False,
+            retain=True,
+            qos=1,
+            wait=True,
+        )
 
     def run_forever(self) -> None:
         self.start()
@@ -715,6 +743,10 @@ class Bridge:
             "MQTT disconnected reason_code=%s",
             reason_code,
         )
+        if self._stopping:
+            _LOG.info("MQTT disconnected during bridge shutdown")
+            return
+
         self.execute_actions(self.state.mqtt_disconnected())
         self._write_health("starting")
 

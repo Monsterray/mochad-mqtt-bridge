@@ -216,6 +216,7 @@ class MqttClient:
         payload: Payload,
         retain: bool = False,
         qos: int = 0,
+        wait: bool = False,
     ) -> None:
         serialized = self._serialize_payload(payload)
 
@@ -228,12 +229,17 @@ class MqttClient:
                 serialized,
             )
 
-        self._client.publish(
+        result = self._client.publish(
             topic,
             serialized,
             qos=qos,
             retain=retain,
         )
+
+        if wait:
+            wait_for_publish = getattr(result, "wait_for_publish", None)
+            if callable(wait_for_publish):
+                wait_for_publish()
 
     def publish_discovery(
         self,
@@ -294,22 +300,30 @@ class MqttClient:
         self,
         online: bool,
         retain: bool = True,
+        qos: int = 0,
+        wait: bool = False,
     ) -> None:
         self.publish(
             Topics.availability(base_topic=self.base_topic),
             "online" if online else "offline",
             retain=retain,
+            qos=qos,
+            wait=wait,
         )
 
     def publish_status(
         self,
         payload: Payload,
         retain: bool = True,
+        qos: int = 0,
+        wait: bool = False,
     ) -> None:
         self.publish(
             Topics.status(base_topic=self.base_topic),
             payload,
             retain=retain,
+            qos=qos,
+            wait=wait,
         )
 
     def publish_bridge_response(
