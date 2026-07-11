@@ -49,13 +49,13 @@ class ProtocolParser:
         if not line:
             return None
 
-        snapshot = self.status.feed(line)
+        if self.status.is_status_line(line):
+            snapshot = self.status.feed(line)
 
-        if snapshot is not None:
-            self.capabilities.status = True
-            return snapshot
+            if snapshot is not None:
+                self.capabilities.status = True
+                return snapshot
 
-        if self.status.active:
             return None
 
         match = DEVICE_EVENT_RE.match(line)

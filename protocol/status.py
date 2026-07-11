@@ -6,7 +6,14 @@ from __future__ import annotations
 
 from models import Command, StatusSnapshot
 
-from .regex import DEVICE_SELECTED_RE, END_STATUS_RE, HOUSE_STATUS_RE
+from .regex import (
+    DEVICE_SELECTED_RE,
+    DEVICE_STATUS_RE,
+    END_STATUS_RE,
+    HOUSE_COUNT_RE,
+    SECURITY_STATUS_RE,
+    STRICT_HOUSE_STATUS_RE,
+)
 from .validation import normalize_address
 
 
@@ -26,6 +33,22 @@ class StatusParser:
     def active(self) -> bool:
         return self._active
 
+    @staticmethod
+    def is_status_line(line: str) -> bool:
+        line = line.strip()
+
+        return any(
+            pattern.match(line)
+            for pattern in (
+                DEVICE_SELECTED_RE,
+                DEVICE_STATUS_RE,
+                SECURITY_STATUS_RE,
+                HOUSE_COUNT_RE,
+                STRICT_HOUSE_STATUS_RE,
+                END_STATUS_RE,
+            )
+        )
+
     def feed(self, line: str) -> StatusSnapshot | None:
         line = line.strip()
 
@@ -34,18 +57,21 @@ class StatusParser:
             self._active = True
             return None
 
+        if DEVICE_STATUS_RE.match(line) or SECURITY_STATUS_RE.match(line):
+            return None
+
+        if HOUSE_COUNT_RE.match(line):
+            return None
+
         if not self._active:
             return None
 
-        match = HOUSE_STATUS_RE.match(line)
+        match = STRICT_HOUSE_STATUS_RE.match(line)
 
-        if match and "=" in match.group("devices"):
+        if match:
             house = match.group("house").upper()
 
             for entry in match.group("devices").split(","):
-                if "=" not in entry:
-                    continue
-
                 unit, value = entry.split("=", 1)
                 address = normalize_address(f"{house}{unit.strip()}")
 
