@@ -210,7 +210,7 @@ class Topics:
                 f"Invalid command topic '{topic}'."
             )
 
-        return parts[1]
+        return Topics._address(parts[1])
 
     @staticmethod
     def parse_bridge_command_topic(
