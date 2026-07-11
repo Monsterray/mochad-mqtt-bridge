@@ -143,6 +143,9 @@ class DiscoveryManager:
         device: DeviceConfig,
         mochad_diagnostics: MochadDiagnostics | None,
     ) -> dict:
+        if device.entity_type == DeviceType.CHIME:
+            return self._button_payload(device, mochad_diagnostics)
+
         return {
             "name": device.name,
             "unique_id": Topics.unique_id(device),
@@ -165,6 +168,31 @@ class DiscoveryManager:
             ),
             "payload_on": "ON",
             "payload_off": "OFF",
+            "device": self._device_block(mochad_diagnostics),
+            "origin": self._origin_block(mochad_diagnostics),
+        }
+
+    def _button_payload(
+        self,
+        device: DeviceConfig,
+        mochad_diagnostics: MochadDiagnostics | None,
+    ) -> dict:
+        return {
+            "name": device.name,
+            "unique_id": Topics.unique_id(device),
+            "default_entity_id": self._default_entity_id(
+                "button",
+                Topics.unique_id(device),
+            ),
+            "command_topic": Topics.command(
+                device,
+                base_topic=self.base_topic,
+                friendly_topics=self.friendly_topics,
+            ),
+            "payload_press": "ON",
+            "availability_topic": Topics.availability(
+                base_topic=self.base_topic,
+            ),
             "device": self._device_block(mochad_diagnostics),
             "origin": self._origin_block(mochad_diagnostics),
         }
@@ -467,6 +495,7 @@ class DiscoveryManager:
         if device.entity_type not in {
             DeviceType.LIGHT,
             DeviceType.SWITCH,
+            DeviceType.CHIME,
         }:
             raise DiscoveryError(
                 f"Unsupported entity type {device.entity_type}."
@@ -489,14 +518,22 @@ class DiscoveryManager:
         required_payload_fields = {
             "name",
             "unique_id",
-            "state_topic",
             "command_topic",
             "availability_topic",
-            "payload_on",
-            "payload_off",
             "device",
             "origin",
         }
+
+        if message.topic.split("/")[1] == "button":
+            required_payload_fields.add("payload_press")
+        else:
+            required_payload_fields.update(
+                {
+                    "state_topic",
+                    "payload_on",
+                    "payload_off",
+                }
+            )
 
         missing = required_payload_fields - set(message.payload)
 
@@ -512,7 +549,7 @@ class DiscoveryManager:
         if not message.payload["unique_id"]:
             raise DiscoveryError("Discovery unique_id cannot be empty.")
 
-        if not message.payload["state_topic"]:
+        if "state_topic" in message.payload and not message.payload["state_topic"]:
             raise DiscoveryError("Discovery state_topic cannot be empty.")
 
         if not message.payload["command_topic"]:

@@ -332,6 +332,9 @@ def _parse_device_type(value: str) -> DeviceType:
     if value == "switch":
         return DeviceType.SWITCH
 
+    if value == "chime":
+        return DeviceType.CHIME
+
     raise ConfigError(
         f"Unknown device type '{value}'."
     )

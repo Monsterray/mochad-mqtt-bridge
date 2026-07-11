@@ -247,6 +247,9 @@ class Topics:
         if device.entity_type == DeviceType.SWITCH:
             return "switch"
 
+        if device.entity_type == DeviceType.CHIME:
+            return "button"
+
         raise TopicError(
             f"Unsupported Home Assistant entity type {device.entity_type}."
         )

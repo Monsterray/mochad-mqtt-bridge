@@ -64,9 +64,12 @@ class DeviceType(Enum):
 
     SWITCH = auto()
     LIGHT = auto()
+    CHIME = auto()
 
 class DeviceCapability(Enum):
     """Capabilities supported by an X10 device."""
+
+    ACTION = auto()
 
     ON_OFF = auto()
 
@@ -130,6 +133,50 @@ class DeviceConfig:
     command_repeats: int = 1
 
     command_repeat_delay_ms: int = 150
+
+    supported_commands: frozenset[Command] = field(default_factory=frozenset)
+
+    stateful: bool = True
+
+    def __post_init__(self) -> None:
+        if self.entity_type == DeviceType.CHIME:
+            object.__setattr__(
+                self,
+                "capabilities",
+                frozenset({DeviceCapability.ACTION}),
+            )
+            object.__setattr__(
+                self,
+                "supported_commands",
+                frozenset({Command.ON}),
+            )
+            object.__setattr__(self, "stateful", False)
+            return
+
+        if self.supported_commands:
+            return
+
+        if self.entity_type == DeviceType.LIGHT:
+            commands = frozenset(
+                {
+                    Command.ON,
+                    Command.OFF,
+                    Command.DIM,
+                    Command.BRIGHT,
+                }
+            )
+            capabilities = frozenset(
+                {
+                    DeviceCapability.ON_OFF,
+                    DeviceCapability.DIM,
+                }
+            )
+        else:
+            commands = frozenset({Command.ON, Command.OFF})
+            capabilities = frozenset({DeviceCapability.ON_OFF})
+
+        object.__setattr__(self, "supported_commands", commands)
+        object.__setattr__(self, "capabilities", capabilities)
 
 ###############################################################################
 # Runtime State
@@ -428,6 +475,16 @@ class PublishStateAction(BridgeAction):
 class PublishEventAction(BridgeAction):
 
     event: DeviceEvent
+
+
+@dataclass(slots=True, frozen=True)
+class PublishCommandEventAction(BridgeAction):
+
+    address: str
+
+    payload: dict
+
+    retain: bool = False
 
 
 @dataclass(slots=True, frozen=True)

@@ -37,6 +37,7 @@ from models import (
     PublishAttributesAction,
     PublishAvailabilityAction,
     PublishBridgeResponseAction,
+    PublishCommandEventAction,
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
@@ -341,6 +342,20 @@ class Bridge:
             )
             return
 
+        if isinstance(action, PublishCommandEventAction):
+            _LOG.info(
+                "MQTT publish command event address=%s command=%s retain=%s",
+                action.address,
+                action.payload.get("command"),
+                action.retain,
+            )
+            self.clients.mqtt.publish_event(
+                action.address,
+                action.payload,
+                retain=action.retain,
+            )
+            return
+
         if isinstance(action, PublishAttributesAction):
             _LOG.info(
                 "MQTT publish attributes address=%s retain=%s",
@@ -516,6 +531,16 @@ class Bridge:
                 "Ignoring unsupported MQTT command payload %r on %s",
                 message.payload,
                 message.topic,
+            )
+            return
+
+        device = self._device_config(message.device)
+        if command not in device.supported_commands:
+            _LOG.warning(
+                "Ignoring unsupported command device=%s type=%s command=%s",
+                device.address,
+                device.entity_type.name,
+                command.name,
             )
             return
 

@@ -129,7 +129,7 @@ future legacy-compatibility requirement makes it necessary.
 Example devices:
 
 ```text
-X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
+X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch,A3:Door Chime:chime
 ```
 
 Optional command repeat settings can be appended per device:
@@ -143,6 +143,18 @@ field is the delay between repeats in milliseconds and defaults to `150`.
 Repeats are bridge-side reliability tuning only; Home Assistant discovery is
 unchanged. The bridge repeats only `ON` and `OFF` commands. `DIM` and `BRIGHT`
 remain single-shot so brightness does not move farther than requested.
+
+Action-only devices, such as an SC546A chime, can use the `chime` type:
+
+```text
+X10_DEVICES=A3:Door Chime:chime
+```
+
+Chimes are discovered in Home Assistant as buttons. Pressing the button
+publishes `ON` to the normal per-address command topic, for example
+`x10/A3/command`. Chimes are not stateful: the bridge does not publish retained
+state for them, does not optimistically report them as `ON`, and emits only a
+non-retained event noting that the physical transmission is unconfirmed.
 
 Friendly names are enabled by default and are used only for Home Assistant
 display names. Set `X10_USE_FRIENDLY_NAMES=false` to make discovered entity
@@ -173,6 +185,11 @@ Example `bridge.json`:
       "address": "A2",
       "name": "Coffee Maker",
       "type": "switch"
+    },
+    {
+      "address": "A3",
+      "name": "Door Chime",
+      "type": "chime"
     }
   ]
 }
