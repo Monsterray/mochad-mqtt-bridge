@@ -1,8 +1,11 @@
+from dataclasses import replace
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from bridge import Bridge
 from config import Config, MqttTlsConfig
+from discovery_registry import DiscoveryRegistry
 from mqtt_client import MqttCommandMessage
 from models import BridgeCommand, DeviceConfig, DeviceType
 
@@ -17,6 +20,7 @@ class FakeMqttClient:
         self.events = []
         self.status_payloads = []
         self.availability = []
+        self.bridge_responses = []
         self.disconnected = False
 
     def set_command_callback(self, callback):
@@ -48,6 +52,9 @@ class FakeMqttClient:
 
     def publish_availability(self, online, retain=True, qos=0, wait=False):
         self.availability.append((online, retain, qos, wait))
+
+    def publish_bridge_response(self, payload, retain=False):
+        self.bridge_responses.append((payload, retain))
 
     def disconnect(self):
         self.connected = False
@@ -121,6 +128,88 @@ class BridgeCommandParsingTests(unittest.TestCase):
         self.assertIsNone(
             Bridge._parse_bridge_command_payload("not-a-command")
         )
+
+
+class BridgeDiscoveryPruneTests(unittest.TestCase):
+    def test_cleanup_disabled_preserves_stale_registry_topics_for_manual_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = f"{directory}/discovery_registry.json"
+            registry = DiscoveryRegistry(registry_path)
+            registry.save(
+                {
+                    "homeassistant/light/x10_A1/config",
+                    "homeassistant/switch/x10_A2/config",
+                }
+            )
+            bridge = Bridge(
+                minimal_config(
+                    devices={
+                        "A1": DeviceConfig(
+                            address="A1",
+                            name="Lamp",
+                            entity_type=DeviceType.LIGHT,
+                        )
+                    }
+                ),
+                mqtt_client=FakeMqttClient(),
+                mochad_client=FakeMochadClient(),
+            )
+            bridge.discovery_registry = registry
+
+            result = bridge._run_discovery_cleanup(force=False)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["stale"], 1)
+            self.assertIn(
+                "homeassistant/switch/x10_A2/config",
+                registry.load(),
+            )
+
+    def test_prune_button_clears_stale_registry_topics_and_saves_desired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = f"{directory}/discovery_registry.json"
+            registry = DiscoveryRegistry(registry_path)
+            registry.save(
+                {
+                    "homeassistant/light/x10_A1/config",
+                    "homeassistant/switch/x10_A2/config",
+                }
+            )
+            mqtt = FakeMqttClient()
+            bridge = Bridge(
+                minimal_config(
+                    devices={
+                        "A1": DeviceConfig(
+                            address="A1",
+                            name="Lamp",
+                            entity_type=DeviceType.LIGHT,
+                        )
+                    }
+                ),
+                mqtt_client=mqtt,
+                mochad_client=FakeMochadClient(),
+            )
+            bridge.config = replace(
+                bridge.config,
+                enable_maintenance_buttons=True,
+            )
+            bridge.discovery_registry = registry
+
+            bridge._handle_bridge_command(BridgeCommand.PRUNE_DISCOVERY)
+
+            cleared = [
+                message
+                for message in mqtt.discovery_messages
+                if message.topic == "homeassistant/switch/x10_A2/config"
+                and message.payload == ""
+                and message.retain
+            ]
+            self.assertEqual(len(cleared), 1)
+            self.assertNotIn(
+                "homeassistant/switch/x10_A2/config",
+                registry.load(),
+            )
+            self.assertTrue(mqtt.bridge_responses[-1][0]["success"])
 
 
 class DeviceCommandRoutingTests(unittest.TestCase):

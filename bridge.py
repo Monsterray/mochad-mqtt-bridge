@@ -972,10 +972,22 @@ class Bridge:
         desired_topics = self._desired_discovery_topics()
 
         if not force and not self.config.discovery_cleanup:
-            saved = self._save_discovery_registry(desired_topics)
+            try:
+                previous_topics = self.discovery_registry.load()
+            except DiscoveryRegistryError as exc:
+                _LOG.warning(
+                    "Discovery registry load failed while cleanup disabled: %s",
+                    exc,
+                )
+                previous_topics = set()
+
+            saved = self._save_discovery_registry(
+                previous_topics | desired_topics
+            )
             _LOG.info(
-                "Discovery registry updated desired=%d cleanup_enabled=%s registry=%s",
+                "Discovery registry updated desired=%d tracked=%d cleanup_enabled=%s registry=%s",
                 len(desired_topics),
+                len(previous_topics | desired_topics),
                 self.config.discovery_cleanup,
                 self.config.discovery_registry_path,
             )
@@ -983,7 +995,8 @@ class Bridge:
                 "success": saved,
                 "message": "Discovery registry updated.",
                 "desired": len(desired_topics),
-                "stale": 0,
+                "tracked": len(previous_topics | desired_topics),
+                "stale": len(previous_topics - desired_topics),
                 "cleanup_enabled": self.config.discovery_cleanup,
             }
 
