@@ -156,6 +156,18 @@ publishes `ON` to the normal per-address command topic, for example
 state for them, does not optimistically report them as `ON`, and emits only a
 non-retained event noting that the physical transmission is unconfirmed.
 
+Specific X10 device behavior can also be selected with a capability profile:
+
+```text
+X10_DEVICES=A1:Porch Socket:lm15a_socket_rocket,A3:Door Chime:sc546a_chime
+```
+
+Profiles keep product-specific behavior in the bridge, not in mochad-redux.
+They describe statefulness, supported commands, repeatable actions, house-wide
+command responses, learned addressing, secondary channels, and momentary versus
+continuous operation. See
+[`docs/capability-device-registry.md`](docs/capability-device-registry.md).
+
 Friendly names are enabled by default and are used only for Home Assistant
 display names. Set `X10_USE_FRIENDLY_NAMES=false` to make discovered entity
 names use stable X10 addresses such as `A1`.

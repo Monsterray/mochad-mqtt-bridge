@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from device_registry import apply_profile, get_profile, profile_ids
 from models import DeviceConfig, DeviceType
 
 
@@ -340,6 +341,19 @@ def _parse_device_type(value: str) -> DeviceType:
     )
 
 
+def _parse_device_type_and_profile(value: str) -> tuple[DeviceType, str | None]:
+    normalized = value.strip().lower()
+
+    if normalized in profile_ids():
+        try:
+            profile = get_profile(normalized)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        return profile.entity_type, profile.profile_id
+
+    return _parse_device_type(value), None
+
+
 def _display_name(
     address: str,
     name: str | None,
@@ -406,8 +420,9 @@ def _device_config(
     entity_type: DeviceType = DeviceType.SWITCH,
     command_repeats: object = DEFAULT_COMMAND_REPEATS,
     command_repeat_delay_ms: object = DEFAULT_COMMAND_REPEAT_DELAY_MS,
+    profile: str | None = None,
 ) -> DeviceConfig:
-    return DeviceConfig(
+    device = DeviceConfig(
         address=address,
         name=name,
         entity_type=entity_type,
@@ -416,6 +431,14 @@ def _device_config(
             command_repeat_delay_ms
         ),
     )
+
+    if profile is None:
+        return device
+
+    try:
+        return apply_profile(device, profile)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def parse_devices(
@@ -490,6 +513,8 @@ def parse_devices(
                 else DEFAULT_COMMAND_REPEAT_DELAY_MS
             )
 
+            entity_type, profile = _parse_device_type_and_profile(parts[2])
+
             devices[address] = _device_config(
                 address=address,
                 name=_display_name(
@@ -497,9 +522,10 @@ def parse_devices(
                     parts[1],
                     use_friendly_names,
                 ),
-                entity_type=_parse_device_type(parts[2]),
+                entity_type=entity_type,
                 command_repeats=repeats,
                 command_repeat_delay_ms=repeat_delay_ms,
+                profile=profile,
             )
 
             continue
@@ -557,6 +583,13 @@ def _parse_device_list(
         address = _normalize_address(str(item.get("address", "")))
         name = item.get("name")
         entity_type = item.get("type", item.get("entity_type", "switch"))
+        profile = item.get("profile")
+        if profile is None:
+            entity_type, profile = _parse_device_type_and_profile(
+                str(entity_type)
+            )
+        else:
+            entity_type = _parse_device_type(str(entity_type))
         repeats = item.get(
             "command_repeats",
             item.get("repeats", DEFAULT_COMMAND_REPEATS),
@@ -573,9 +606,10 @@ def _parse_device_list(
                 None if name is None else str(name),
                 use_friendly_names,
             ),
-            entity_type=_parse_device_type(str(entity_type)),
+            entity_type=entity_type,
             command_repeats=repeats,
             command_repeat_delay_ms=repeat_delay_ms,
+            profile=None if profile is None else str(profile),
         )
 
     return devices
@@ -607,6 +641,13 @@ def _parse_device_mapping(
                 "type",
                 value.get("entity_type", "switch"),
             )
+            profile = value.get("profile")
+            if profile is None:
+                entity_type, profile = _parse_device_type_and_profile(
+                    str(entity_type)
+                )
+            else:
+                entity_type = _parse_device_type(str(entity_type))
             repeats = value.get(
                 "command_repeats",
                 value.get("repeats", DEFAULT_COMMAND_REPEATS),
@@ -622,9 +663,10 @@ def _parse_device_mapping(
                     None if name is None else str(name),
                     use_friendly_names,
                 ),
-                entity_type=_parse_device_type(str(entity_type)),
+                entity_type=entity_type,
                 command_repeats=repeats,
                 command_repeat_delay_ms=repeat_delay_ms,
+                profile=None if profile is None else str(profile),
             )
             continue
 
@@ -733,13 +775,18 @@ def _load_config_file(path: str | None) -> dict:
 
 
 def _device_to_file_payload(device: DeviceConfig) -> dict:
-    return {
+    payload = {
         "address": device.address,
         "name": device.name,
         "type": device.entity_type.name.lower(),
         "command_repeats": device.command_repeats,
         "command_repeat_delay_ms": device.command_repeat_delay_ms,
     }
+
+    if device.profile is not None:
+        payload["profile"] = device.profile
+
+    return payload
 
 
 def _config_file_payload(config: Config) -> dict:

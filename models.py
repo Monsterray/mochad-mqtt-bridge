@@ -81,6 +81,35 @@ class DeviceCapability(Enum):
 
     ALL_UNITS = auto()
 
+
+class OperationMode(Enum):
+    """How a device behaves after receiving a command."""
+
+    CONTINUOUS = auto()
+    MOMENTARY = auto()
+    ACTION = auto()
+    SENSOR = auto()
+    ALARM_SEQUENCE = auto()
+
+
+class ChannelKind(Enum):
+    """Secondary address/channel semantics for multi-address X10 devices."""
+
+    MOTION = auto()
+    DUSK_DAWN = auto()
+    SENSOR = auto()
+    FLOODLIGHT = auto()
+    INTERNAL_OUTLET = auto()
+    GROUPED_ADDRESS = auto()
+    SECURITY_RF = auto()
+
+
+class RfIdentity(Enum):
+    """RF identity family used by mochad-redux event normalization."""
+
+    STANDARD = auto()
+    SECURITY = auto()
+
 class BridgeHealth(Enum):
     """Overall bridge health."""
 
@@ -114,6 +143,26 @@ class BridgeCommand(Enum):
 
 
 @dataclass(slots=True, frozen=True)
+class SecondaryChannel:
+    """Additional X10 address behavior derived from one configured address."""
+
+    kind: ChannelKind
+    offset: int = 0
+    description: str = ""
+    enabled_by_default: bool = True
+
+
+@dataclass(slots=True, frozen=True)
+class CommandSequence:
+    """Intentional repeated or grouped command pattern."""
+
+    name: str
+    commands: tuple[Command, ...]
+    repeatable: bool = True
+    description: str = ""
+
+
+@dataclass(slots=True, frozen=True)
 class DeviceConfig:
 
     address: str
@@ -121,6 +170,8 @@ class DeviceConfig:
     name: str
 
     entity_type: DeviceType = DeviceType.SWITCH
+
+    profile: str | None = None
 
     capabilities: frozenset[DeviceCapability] = field(
         default_factory=lambda: frozenset(
@@ -138,8 +189,28 @@ class DeviceConfig:
 
     stateful: bool = True
 
+    repeatable_actions: frozenset[Command] = field(default_factory=frozenset)
+
+    all_lights_on_response: bool = False
+
+    all_lights_off_response: bool = False
+
+    all_units_off_response: bool = True
+
+    learned_addressing: bool = False
+
+    secondary_channels: tuple[SecondaryChannel, ...] = ()
+
+    exclusive_groups: frozenset[str] = field(default_factory=frozenset)
+
+    operation_mode: OperationMode = OperationMode.CONTINUOUS
+
+    command_sequences: tuple[CommandSequence, ...] = ()
+
+    rf_identity: RfIdentity = RfIdentity.STANDARD
+
     def __post_init__(self) -> None:
-        if self.entity_type == DeviceType.CHIME:
+        if self.entity_type == DeviceType.CHIME and not self.supported_commands:
             object.__setattr__(
                 self,
                 "capabilities",
@@ -151,6 +222,12 @@ class DeviceConfig:
                 frozenset({Command.ON}),
             )
             object.__setattr__(self, "stateful", False)
+            object.__setattr__(
+                self,
+                "repeatable_actions",
+                frozenset({Command.ON}),
+            )
+            object.__setattr__(self, "operation_mode", OperationMode.ACTION)
             return
 
         if self.supported_commands:
@@ -171,12 +248,26 @@ class DeviceConfig:
                     DeviceCapability.DIM,
                 }
             )
+            all_lights_on_response = True
+            all_lights_off_response = True
         else:
             commands = frozenset({Command.ON, Command.OFF})
             capabilities = frozenset({DeviceCapability.ON_OFF})
+            all_lights_on_response = False
+            all_lights_off_response = False
 
         object.__setattr__(self, "supported_commands", commands)
         object.__setattr__(self, "capabilities", capabilities)
+        object.__setattr__(
+            self,
+            "all_lights_on_response",
+            all_lights_on_response,
+        )
+        object.__setattr__(
+            self,
+            "all_lights_off_response",
+            all_lights_off_response,
+        )
 
 ###############################################################################
 # Runtime State

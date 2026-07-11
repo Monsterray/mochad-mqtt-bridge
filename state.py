@@ -327,6 +327,12 @@ class StateManager:
             if not device.stateful:
                 continue
 
+            if not self._device_responds_to_house_command(
+                device,
+                event.command,
+            ):
+                continue
+
             state.available = True
             state.last_seen = event.timestamp
 
@@ -349,6 +355,22 @@ class StateManager:
             )
 
         return actions
+
+    @staticmethod
+    def _device_responds_to_house_command(
+        device: DeviceConfig,
+        command: Command,
+    ) -> bool:
+        if command == Command.ALL_UNITS_OFF:
+            return device.all_units_off_response
+
+        if command == Command.ALL_LIGHTS_OFF:
+            return device.all_lights_off_response
+
+        if command == Command.ALL_LIGHTS_ON:
+            return device.all_lights_on_response
+
+        return False
 
     def _apply_status_snapshot(
         self,

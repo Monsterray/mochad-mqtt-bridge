@@ -143,7 +143,7 @@ class DiscoveryManager:
         device: DeviceConfig,
         mochad_diagnostics: MochadDiagnostics | None,
     ) -> dict:
-        if device.entity_type == DeviceType.CHIME:
+        if device.entity_type == DeviceType.CHIME or not device.stateful:
             return self._button_payload(device, mochad_diagnostics)
 
         return {
