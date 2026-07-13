@@ -49,6 +49,7 @@ from models import (
 from mochad_client import MochadClient
 from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
 from protocol import ProtocolParser, encode_rf_command
+from protocol.validation import normalize_address
 from state import StateManager
 
 
@@ -562,7 +563,17 @@ class Bridge:
             )
             return
 
-        device = self._device_config(message.device)
+        try:
+            address = normalize_address(message.device)
+        except ValueError:
+            _LOG.warning(
+                "Ignoring MQTT command with invalid X10 address device=%s topic=%s",
+                message.device,
+                message.topic,
+            )
+            return
+
+        device = self._device_config(address)
         if command not in device.supported_commands:
             _LOG.warning(
                 "Ignoring unsupported command device=%s type=%s command=%s",
@@ -572,9 +583,20 @@ class Bridge:
             )
             return
 
+        try:
+            encode_rf_command(address, command)
+        except ValueError as exc:
+            _LOG.warning(
+                "Ignoring MQTT command that cannot be encoded device=%s command=%s error=%s",
+                address,
+                command.name,
+                exc,
+            )
+            return
+
         self.execute_actions(
             self.state.optimistic_update(
-                message.device,
+                address,
                 command,
             )
         )

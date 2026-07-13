@@ -102,6 +102,52 @@ class MqttClientRoutingTests(unittest.TestCase):
         self.assertEqual(bridge_messages[0].payload, "STATUS")
         self.assertEqual(device_messages, [])
 
+    def test_malformed_command_topics_do_not_route_to_device_callback(self):
+        for topic in (
+            "x10/A17/command",
+            "x10/A1/command/extra",
+            "x10//command",
+        ):
+            with self.subTest(topic=topic):
+                fake = FakePahoClient()
+                client = MqttClient(
+                    host="mosquitto",
+                    client_factory=lambda client_id: fake,
+                )
+                device_messages = []
+                bridge_messages = []
+                client.set_command_callback(device_messages.append)
+                client.set_bridge_command_callback(bridge_messages.append)
+
+                client._on_message(
+                    fake,
+                    None,
+                    FakeMessage(topic, b"ON"),
+                )
+
+                self.assertEqual(device_messages, [])
+                self.assertEqual(bridge_messages, [])
+
+    def test_bridge_command_topic_does_not_route_to_device_callback(self):
+        fake = FakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+        device_messages = []
+        bridge_messages = []
+        client.set_command_callback(device_messages.append)
+        client.set_bridge_command_callback(bridge_messages.append)
+
+        client._on_message(
+            fake,
+            None,
+            FakeMessage("x10/bridge/command", b"STATUS"),
+        )
+
+        self.assertEqual(device_messages, [])
+        self.assertEqual(len(bridge_messages), 1)
+
     def test_subscribes_once_to_command_wildcard(self):
         fake = FakePahoClient()
         client = MqttClient(

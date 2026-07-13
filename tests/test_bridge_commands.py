@@ -312,6 +312,70 @@ class DeviceCommandRoutingTests(unittest.TestCase):
         self.assertEqual(len(mqtt.events), 1)
         self.assertEqual(mqtt.events[0][0], "A2")
 
+    def test_invalid_address_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A17",
+                payload="ON",
+                topic="x10/A17/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
+    def test_invalid_payload_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A1",
+                payload="not-a-command",
+                topic="x10/A1/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
+    def test_encode_failure_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        with patch("bridge.encode_rf_command", side_effect=ValueError("bad")):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A1",
+                    payload="ON",
+                    topic="x10/A1/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
 
 class BridgeShutdownTests(unittest.TestCase):
     def test_stop_publishes_retained_shutdown_status_before_disconnect(self):

@@ -85,7 +85,7 @@ class ConfigReloadTests(unittest.TestCase):
             bridge_config["devices"][0]["command_repeats"],
             2,
         )
-        self.assertEqual(registry, {"topics": []})
+        self.assertEqual(registry, {"topics": [], "version": 1})
 
     def test_bridge_reloads_config_file_and_republishes_discovery(self):
         with tempfile.TemporaryDirectory() as directory:
