@@ -58,6 +58,11 @@ jobs:
       - name: Build Docker image
         run: docker build --pull --tag x10-mochad-mqtt-bridge:ci .
 
+      - name: Validate container permissions
+        env:
+          IMAGE: x10-mochad-mqtt-bridge:ci
+        run: scripts/validate/container_permissions.sh
+
   mqtt-tls-integration:
     name: Mosquitto MQTT TLS integration
     runs-on: ubuntu-latest

@@ -5,6 +5,7 @@ PUID="${PUID:-911}"
 PGID="${PGID:-911}"
 TZ="${TZ:-UTC}"
 UMASK="${UMASK:-022}"
+ALLOW_ROOT="${ALLOW_ROOT:-false}"
 
 is_number() {
     case "$1" in
@@ -30,8 +31,8 @@ if ! is_number "$PUID" || ! is_number "$PGID"; then
     exit 64
 fi
 
-if [ "$PUID" = "0" ] || [ "$PGID" = "0" ]; then
-    echo "[STARTUP] PUID and PGID must be non-root IDs" >&2
+if { [ "$PUID" = "0" ] || [ "$PGID" = "0" ]; } && [ "$ALLOW_ROOT" != "true" ]; then
+    echo "[STARTUP] PUID and PGID must be non-root IDs unless ALLOW_ROOT=true" >&2
     exit 64
 fi
 
