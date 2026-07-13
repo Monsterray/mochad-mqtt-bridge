@@ -7,6 +7,13 @@ services:
     image: x10-mochad-mqtt-bridge:local
     container_name: mochad-mqtt-bridge
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
 
     environment:
       PUID: ${PUID:-911}

@@ -16,6 +16,7 @@ Use this checklist before publishing a GitHub release or Docker image.
 - [ ] Run available unit tests.
 - [ ] Run `docker compose config`.
 - [ ] Build the Docker image.
+- [ ] Run `scripts/validate/container_hardening.sh` on a Docker host.
 - [ ] Run README first-run smoke checks against a real MQTT broker and `mochad`.
 - [ ] Confirm MQTT topics still use `/command`, not `/set`.
 - [ ] Confirm Home Assistant discovery `unique_id` values remain address-based.
