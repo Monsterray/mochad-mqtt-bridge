@@ -79,6 +79,21 @@ class PahoClientProtocol(Protocol):
     ):
         ...
 
+    def connect_async(
+        self,
+        host: str,
+        port: int = 1883,
+        keepalive: int = 60,
+    ):
+        ...
+
+    def reconnect_delay_set(
+        self,
+        min_delay: int = 1,
+        max_delay: int = 120,
+    ) -> None:
+        ...
+
     def disconnect(self):
         ...
 
@@ -127,6 +142,8 @@ class MqttClient:
         base_topic: str = "x10",
         client_id: str = "mqtt-mochad-bridge",
         keepalive: int = 60,
+        reconnect_min_delay: int = 1,
+        reconnect_max_delay: int = 30,
         debug_wire: bool = False,
         tls_config: MqttTlsConfig | None = None,
         ssl_context_factory: TlsContextFactory = build_mqtt_ssl_context,
@@ -139,6 +156,8 @@ class MqttClient:
         self.base_topic = base_topic
         self.client_id = client_id
         self.keepalive = keepalive
+        self.reconnect_min_delay = reconnect_min_delay
+        self.reconnect_max_delay = reconnect_max_delay
         self.debug_wire = debug_wire
         self.tls_config = tls_config or MqttTlsConfig()
         self._ssl_context_factory = ssl_context_factory
@@ -189,11 +208,36 @@ class MqttClient:
             bool(self.username),
             self.tls_config.enabled,
         )
-        self._client.connect(
-            self.host,
-            self.port,
-            self.keepalive,
+        reconnect_delay_set = getattr(
+            self._client,
+            "reconnect_delay_set",
+            None,
         )
+        if callable(reconnect_delay_set):
+            reconnect_delay_set(
+                min_delay=self.reconnect_min_delay,
+                max_delay=self.reconnect_max_delay,
+            )
+
+        connect_async = getattr(self._client, "connect_async", None)
+        try:
+            if callable(connect_async):
+                connect_async(
+                    self.host,
+                    self.port,
+                    self.keepalive,
+                )
+            else:
+                self._client.connect(
+                    self.host,
+                    self.port,
+                    self.keepalive,
+                )
+        except OSError as exc:
+            _LOG.warning(
+                "MQTT broker unavailable at startup; continuing in degraded mode: %s",
+                exc,
+            )
         self._client.loop_start()
 
     def disconnect(self) -> None:

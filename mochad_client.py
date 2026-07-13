@@ -34,16 +34,21 @@ class MochadClient:
         host: str,
         port: int = 1099,
         reconnect_delay: float = 5.0,
+        connect_timeout: float = 2.0,
+        read_timeout: float = 1.0,
         debug_wire: bool = False,
         socket_factory: SocketFactory | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.reconnect_delay = reconnect_delay
+        self.connect_timeout = connect_timeout
+        self.read_timeout = read_timeout
         self.debug_wire = debug_wire
         self._socket_factory = socket_factory or socket.create_connection
         self._socket: socket.socket | None = None
         self._socket_lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._running = False
         self._thread: threading.Thread | None = None
         self._line_callback: LineCallback | None = None
@@ -78,6 +83,7 @@ class MochadClient:
             return
 
         self._running = True
+        self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run,
             name="mochad-client",
@@ -87,6 +93,7 @@ class MochadClient:
 
     def stop(self) -> None:
         self._running = False
+        self._stop_event.set()
         self.disconnect()
 
         if self._thread and self._thread.is_alive():
@@ -95,10 +102,15 @@ class MochadClient:
     def connect(self) -> None:
         sock = self._socket_factory(
             (self.host, self.port),
-            None,
+            self.connect_timeout,
         )
+        sock.settimeout(self.read_timeout)
 
         with self._socket_lock:
+            if self._stop_event.is_set():
+                sock.close()
+                return
+
             self._socket = sock
 
         if self._connect_callback:
@@ -139,12 +151,13 @@ class MochadClient:
         self.send_line("st")
 
     def _run(self) -> None:
-        while self._running:
+        while self._running and not self._stop_event.is_set():
             error: Exception | None = None
 
             try:
                 self.connect()
-                self._read_loop()
+                if self.connected:
+                    self._read_loop()
             except Exception as exc:
                 error = exc
                 _LOG.warning("mochad transport disconnected: %s", exc)
@@ -158,19 +171,22 @@ class MochadClient:
                         _LOG.exception("mochad disconnect callback failed")
 
             if self._running:
-                time.sleep(self.reconnect_delay)
+                self._stop_event.wait(self.reconnect_delay)
 
     def _read_loop(self) -> None:
         buffer = ""
 
-        while self._running:
+        while self._running and not self._stop_event.is_set():
             with self._socket_lock:
                 sock = self._socket
 
             if sock is None:
                 return
 
-            data = sock.recv(4096)
+            try:
+                data = sock.recv(4096)
+            except socket.timeout:
+                continue
 
             if not data:
                 return
