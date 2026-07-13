@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
@@ -74,6 +75,8 @@ REPEATABLE_COMMANDS = {
     Command.ON,
     Command.OFF,
 }
+
+MAX_QUEUED_DEVICE_COMMANDS = 100
 
 
 @dataclass(slots=True)
@@ -191,6 +194,8 @@ class Bridge:
         self._running = False
         self._stopping = False
         self._dropped_mqtt_publishes = 0
+        self._queued_device_commands: deque[SendDeviceCommandAction] = deque()
+        self._dropped_device_commands = 0
         self._health_file = Path(
             os.getenv("BRIDGE_HEALTH_FILE", DEFAULT_HEALTH_FILE)
         )
@@ -470,6 +475,14 @@ class Bridge:
             return
 
         if isinstance(action, SendDeviceCommandAction):
+            queue_reason = self._device_command_queue_reason()
+            if queue_reason is not None:
+                self._queue_device_command(
+                    action,
+                    reason=queue_reason,
+                )
+                return
+
             self._send_device_command(action)
             return
 
@@ -546,6 +559,91 @@ class Bridge:
 
             if attempt < repeats and delay_seconds > 0:
                 time.sleep(delay_seconds)
+
+    def _device_command_queue_reason(self) -> str | None:
+        if not self.clients.mochad.connected:
+            return "mochad disconnected"
+
+        diagnostics = self._mochad_diagnostics
+        if diagnostics.usb_connected is False:
+            return "mochad USB disconnected"
+
+        if diagnostics.endpoints_ready is False:
+            return "mochad USB endpoints not ready"
+
+        if diagnostics.transfers_ready is False:
+            return "mochad USB transfers not ready"
+
+        return None
+
+    def _queue_device_command(
+        self,
+        action: SendDeviceCommandAction,
+        reason: str,
+    ) -> None:
+        if len(self._queued_device_commands) >= MAX_QUEUED_DEVICE_COMMANDS:
+            dropped = self._queued_device_commands.popleft()
+            self._dropped_device_commands += 1
+            _LOG.warning(
+                "Dropping oldest queued device command address=%s command=%s dropped=%d",
+                dropped.address,
+                dropped.command.name,
+                self._dropped_device_commands,
+            )
+
+        self._queued_device_commands.append(action)
+        _LOG.warning(
+            "Queued device command until mochad USB is ready address=%s command=%s reason=%s queued=%d",
+            action.address,
+            action.command.name,
+            reason,
+            len(self._queued_device_commands),
+        )
+
+        if self.clients.mqtt.connected:
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
+
+    def _flush_queued_device_commands(self) -> None:
+        if not self._queued_device_commands:
+            return
+
+        queue_reason = self._device_command_queue_reason()
+        if queue_reason is not None:
+            _LOG.info(
+                "Device command queue still waiting reason=%s queued=%d",
+                queue_reason,
+                len(self._queued_device_commands),
+            )
+            return
+
+        _LOG.info(
+            "Flushing queued device commands queued=%d",
+            len(self._queued_device_commands),
+        )
+
+        while self._queued_device_commands:
+            action = self._queued_device_commands.popleft()
+            try:
+                self._send_device_command(action)
+            except (ConnectionError, OSError) as exc:
+                self._queued_device_commands.appendleft(action)
+                _LOG.warning(
+                    "Paused queued device command flush address=%s command=%s error=%s queued=%d",
+                    action.address,
+                    action.command.name,
+                    exc,
+                    len(self._queued_device_commands),
+                )
+                return
+
+        if self.clients.mqtt.connected:
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
 
     def _wire_callbacks(self) -> None:
         _LOG.info("Wiring bridge callbacks")
@@ -1238,6 +1336,9 @@ class Bridge:
                     self._desired_discovery_topics()
                 )
 
+        if kind == "health":
+            self._flush_queued_device_commands()
+
         return True
 
     @staticmethod
@@ -1316,6 +1417,14 @@ class Bridge:
             "dropped_mqtt_publishes": getattr(
                 self,
                 "_dropped_mqtt_publishes",
+                0,
+            ),
+            "queued_device_commands": len(
+                getattr(self, "_queued_device_commands", ())
+            ),
+            "dropped_device_commands": getattr(
+                self,
+                "_dropped_device_commands",
                 0,
             ),
             "mqtt": self._mqtt_status_payload(),

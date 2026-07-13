@@ -315,6 +315,78 @@ class DeviceCommandRoutingTests(unittest.TestCase):
         self.assertEqual(mochad.sent_lines, ["rf A1 dim"])
         sleep.assert_not_called()
 
+    def test_device_command_queues_until_usb_is_ready(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": false, "controller": "CM19A", '
+            '"endpoints_ready": false, "transfers_ready": false}'
+        )
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A1",
+                payload="ON",
+                topic="x10/A1/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states[-1][0], "A1")
+        self.assertEqual(
+            bridge._bridge_status_payload()["queued_device_commands"],
+            1,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": true, "controller": "CM19A", '
+            '"endpoints_ready": true, "transfers_ready": true}'
+        )
+
+        self.assertEqual(mochad.sent_lines, ["rf A1 on"])
+        self.assertEqual(
+            bridge._bridge_status_payload()["queued_device_commands"],
+            0,
+        )
+
+    def test_queued_device_commands_flush_in_order(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": false, "controller": "CM19A"}'
+        )
+        for device, payload in (("A1", "ON"), ("A2", "OFF")):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device=device,
+                    payload=payload,
+                    topic=f"x10/{device}/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, [])
+
+        bridge._on_mochad_line(
+            '{"usb_connected": true, "controller": "CM19A", '
+            '"endpoints_ready": true, "transfers_ready": true}'
+        )
+
+        self.assertEqual(
+            mochad.sent_lines,
+            ["rf A1 on", "rf A2 off"],
+        )
+
     def test_chime_repeated_on_commands_each_reach_mochad(self):
         mqtt = FakeMqttClient()
         mochad = FakeMochadClient()
