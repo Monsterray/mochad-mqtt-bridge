@@ -70,6 +70,12 @@ image: ghcr.io/monsterray/mochad-mqtt-bridge:0.1.0
 
 No GitHub Container Registry publishing workflow is enabled yet.
 
+Release image inputs are tracked in `release/versions.env`. Release Docker
+builds use a digest-qualified Python base image and install dependencies from
+`requirements.release.txt` with `pip --require-hashes`. OCI labels are populated
+from Git metadata in CI so release images identify the exact source revision and
+Git commit timestamp.
+
 The container starts as root only long enough to prepare writable paths, then
 drops privileges before starting the bridge. Application files remain owned by
 `root:root`; only `/config` is owned by the runtime `PUID:PGID`.

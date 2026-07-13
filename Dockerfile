@@ -1,17 +1,19 @@
-FROM python:3.12-alpine
+ARG PYTHON_BASE_IMAGE=python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df
+FROM ${PYTHON_BASE_IMAGE}
 
-ARG BUILD_DATE
-ARG VCS_REF
+ARG IMAGE_CREATED
+ARG IMAGE_REVISION
 ARG IMAGE_VERSION=0.1.0
+ARG IMAGE_SOURCE=https://github.com/Monsterray/mochad-mqtt-bridge
 
 LABEL org.opencontainers.image.title="mochad-mqtt-bridge"
 LABEL org.opencontainers.image.description="MQTT bridge for a running mochad X10 TCP service"
 LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
-LABEL org.opencontainers.image.created="${BUILD_DATE}"
-LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.created="${IMAGE_CREATED}"
+LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
 LABEL org.opencontainers.image.vendor="MQTT Mochad Bridge contributors"
-LABEL org.opencontainers.image.source="https://github.com/Monsterray/mochad-mqtt-bridge"
-LABEL org.opencontainers.image.documentation="https://github.com/Monsterray/mochad-mqtt-bridge"
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}"
+LABEL org.opencontainers.image.documentation="${IMAGE_SOURCE}"
 LABEL org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -23,10 +25,12 @@ RUN apk add --no-cache \
     su-exec \
     tini \
     tzdata \
+    && mkdir -p /usr/share/mochad-mqtt-bridge \
+    && apk info -vv > /usr/share/mochad-mqtt-bridge/apk-info.txt \
     && mkdir -p /config
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --no-compile -r requirements.txt
+COPY requirements.txt requirements.release.txt ./
+RUN pip install --no-cache-dir --no-compile --require-hashes -r requirements.release.txt
 
 COPY . .
 

@@ -55,8 +55,44 @@ jobs:
       - name: Validate Docker Compose
         run: docker compose config
 
+      - name: Prepare Docker metadata
+        id: docker-meta
+        run: |
+          . release/versions.env
+          {
+            echo "created=$(git show -s --format=%cI HEAD)"
+            echo "revision=${GITHUB_SHA}"
+            echo "version=${IMAGE_VERSION}"
+            echo "source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "python_base_image=${PYTHON_BASE_IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build Docker image
-        run: docker build --pull --tag x10-mochad-mqtt-bridge:ci .
+        run: |
+          docker build --pull \
+            --build-arg PYTHON_BASE_IMAGE="${{ steps.docker-meta.outputs.python_base_image }}" \
+            --build-arg IMAGE_CREATED="${{ steps.docker-meta.outputs.created }}" \
+            --build-arg IMAGE_REVISION="${{ steps.docker-meta.outputs.revision }}" \
+            --build-arg IMAGE_VERSION="${{ steps.docker-meta.outputs.version }}" \
+            --build-arg IMAGE_SOURCE="${{ steps.docker-meta.outputs.source }}" \
+            --tag x10-mochad-mqtt-bridge:ci .
+
+      - name: Validate Docker image labels
+        run: python scripts/validate/image_labels.py --image x10-mochad-mqtt-bridge:ci
+
+      - name: Record runtime APK package evidence
+        run: |
+          docker run --rm \
+            --entrypoint cat \
+            x10-mochad-mqtt-bridge:ci \
+            /usr/share/mochad-mqtt-bridge/apk-info.txt \
+            > apk-info.txt
+
+      - name: Upload runtime APK package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-runtime-apk-info
+          path: apk-info.txt
 
   mqtt-tls-integration:
     name: Mosquitto MQTT TLS integration
