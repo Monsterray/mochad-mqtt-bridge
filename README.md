@@ -103,6 +103,7 @@ PUID
 PGID
 TZ
 UMASK
+ALLOW_ROOT
 MQTT_HOST
 MQTT_PORT
 MQTT_USERNAME
@@ -135,6 +136,8 @@ The variables above match the bridge runtime configuration in `config.py`.
 defaults are `PUID=911`, `PGID=911`, `TZ=UTC`, and `UMASK=022`. If Compose
 `user:` is set, Docker bypasses this root initialization step; in that mode,
 pre-own mounted volumes and provide any required `group_add` values yourself.
+That mode is intended for externally managed deployments. The normal Compose
+path is to leave `user:` unset and use `PUID`, `PGID`, and `UMASK`.
 
 `MOCHAD_PORT` should point at the main mochad TCP listener. The default is
 `1099`, and the bridge expects newline-delimited mochad events and diagnostic
@@ -266,6 +269,18 @@ MQTT_TLS_KEY_PASSWORD_FILE=/run/secrets/mqtt_client_key_password
 `MQTT_PASSWORD_FILE` and `MQTT_TLS_KEY_PASSWORD_FILE` support Docker-secret
 style files. Do not set both `MQTT_PASSWORD` and `MQTT_PASSWORD_FILE`, or both
 `MQTT_TLS_KEY_PASSWORD` and `MQTT_TLS_KEY_PASSWORD_FILE`.
+
+An example Compose overlay is provided in `docker-compose.secrets.yml`. It
+declares top-level Compose secrets, mounts them under `/run/secrets`, and wires
+them into the existing `*_FILE` environment variables:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+Real secret files should live under a local `secrets/` directory. That
+directory is ignored by Git and secrets are never copied into `/config` by the
+bridge.
 
 The bridge does not support insecure hostname verification and does not
 automatically fall back to plaintext. If any TLS file or private-key password

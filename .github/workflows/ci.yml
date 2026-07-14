@@ -99,6 +99,11 @@ jobs:
           IMAGE: x10-mochad-mqtt-bridge:ci
         run: scripts/validate/container_hardening.sh
 
+      - name: Validate container permissions
+        env:
+          IMAGE: x10-mochad-mqtt-bridge:ci
+        run: scripts/validate/container_permissions.sh
+
   mqtt-tls-integration:
     name: Mosquitto MQTT TLS integration
     runs-on: ubuntu-latest
