@@ -47,6 +47,20 @@ class ContainerPermissionsTests(unittest.TestCase):
             dockerfile,
         )
 
+    def test_dockerfile_does_not_set_secret_environment_defaults(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text()
+
+        for variable in (
+            "MQTT_PASSWORD",
+            "MQTT_PASSWORD_FILE",
+            "MQTT_TLS_CA_FILE",
+            "MQTT_TLS_CERT_FILE",
+            "MQTT_TLS_KEY_FILE",
+            "MQTT_TLS_KEY_PASSWORD",
+            "MQTT_TLS_KEY_PASSWORD_FILE",
+        ):
+            self.assertNotIn(f"ENV {variable}=", dockerfile)
+
     def test_compose_recommends_read_only_runtime_hardening(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text()
 
