@@ -76,6 +76,9 @@ builds use a digest-qualified Python base image and install dependencies from
 from Git metadata in CI so release images identify the exact source revision and
 Git commit timestamp.
 
+CI workflow and branch-protection setup is documented in
+[`docs/ci-branch-protection.md`](docs/ci-branch-protection.md).
+
 The container starts as root only long enough to prepare `/config`, then drops
 to the configured `PUID:PGID` before starting the bridge. Application files
 remain owned by `root:root`; only `/config` is made writable by the runtime

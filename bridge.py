@@ -52,6 +52,7 @@ from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
 from protocol import ProtocolParser, encode_rf_command
 from protocol.validation import normalize_address
 from state import StateManager
+from topics import Topics
 
 
 _LOG = logging.getLogger(__name__)
@@ -375,6 +376,9 @@ class Bridge:
                     "transport": action.event.transport.name,
                     "device": action.event.address,
                     "command": action.event.command.name,
+                    # A CM19A/CM15A Tx line confirms bridge transmission,
+                    # not that the physical X10 device acted on it.
+                    "confirmed": action.event.direction.name != "TX",
                 },
                 retain=False,
             )
@@ -674,6 +678,26 @@ class Bridge:
         self,
         message: MqttCommandMessage,
     ) -> None:
+        try:
+            topic_address = Topics.parse_command_topic(
+                message.topic,
+                base_topic=self.config.mqtt_base_topic,
+            )
+        except ValueError:
+            _LOG.warning(
+                "Ignoring MQTT command with invalid topic %s",
+                message.topic,
+            )
+            return
+
+        if topic_address != message.device:
+            _LOG.warning(
+                "Ignoring MQTT command with mismatched topic device=%s topic=%s",
+                message.device,
+                message.topic,
+            )
+            return
+
         _LOG.info(
             "MQTT command received device=%s payload=%s topic=%s",
             message.device,

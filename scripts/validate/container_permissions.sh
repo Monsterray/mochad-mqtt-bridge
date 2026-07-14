@@ -3,6 +3,7 @@ set -euo pipefail
 
 IMAGE="${IMAGE:-x10-mochad-mqtt-bridge:permissions}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IMAGE_BUILT="${IMAGE_BUILT:-false}"
 
 log() {
     printf '[container-permissions] %s\n' "$*"
@@ -47,14 +48,25 @@ expect_failure() {
 
 require_docker
 
-log "building $IMAGE"
-docker build --pull --tag "$IMAGE" "$ROOT_DIR"
+if [ "$IMAGE_BUILT" != "true" ]; then
+    log "building $IMAGE"
+    docker build --pull --tag "$IMAGE" "$ROOT_DIR"
+else
+    log "using prebuilt $IMAGE"
+fi
 
 log "checking PUID/PGID and UMASK=022"
 run_permission_probe 022 644
 
 log "checking PUID/PGID and UMASK=002"
 run_permission_probe 002 664
+
+log "checking maintenance tools are absent"
+docker run --rm --entrypoint sh "$IMAGE" -eu -c '
+    for tool in git curl wget bash gcc cc make apk; do
+        ! command -v "$tool" >/dev/null 2>&1
+    done
+'
 
 log "checking configured secret files after privilege drop"
 secret_dir="$(mktemp -d)"
