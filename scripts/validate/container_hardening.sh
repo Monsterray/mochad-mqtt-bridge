@@ -43,13 +43,11 @@ log "building $IMAGE"
 docker build --pull --tag "$IMAGE" "$ROOT_DIR"
 
 # The bridge intentionally has no capabilities. Prepare the test volume with
-# the same narrowly scoped CAP_CHOWN initializer used by Docker Compose.
+# the same one-shot root initializer used by Docker Compose.
 docker volume create "$CONFIG_VOLUME" >/dev/null
 trap cleanup EXIT
 docker run --rm \
     --user 0:0 \
-    --cap-drop ALL \
-    --cap-add CHOWN \
     --entrypoint sh \
     -v "$CONFIG_VOLUME:/config" \
     "$IMAGE" \

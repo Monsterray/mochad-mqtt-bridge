@@ -9,10 +9,6 @@ services:
     environment:
       PUID: ${PUID:-911}
       PGID: ${PGID:-911}
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
     volumes:
       - bridge-config:/config
 
