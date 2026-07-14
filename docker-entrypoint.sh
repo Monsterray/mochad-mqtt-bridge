@@ -21,10 +21,6 @@ name_for_gid() {
     awk -F: -v gid="$1" '$3 == gid { print $1; exit }' /etc/group
 }
 
-name_for_uid() {
-    awk -F: -v uid="$1" '$3 == uid { print $1; exit }' /etc/passwd
-}
-
 if ! is_number "$PUID" || ! is_number "$PGID"; then
     echo "[STARTUP] PUID and PGID must be numeric" >&2
     exit 64
@@ -48,21 +44,14 @@ if [ "$(id -u)" != "0" ]; then
     exec "$@"
 fi
 
-group_name="$(name_for_gid "$PGID" || true)"
-if [ -z "$group_name" ]; then
-    group_name="appgroup"
-    addgroup -g "$PGID" "$group_name"
-fi
-
-user_name="$(name_for_uid "$PUID" || true)"
-if [ -z "$user_name" ]; then
-    user_name="appuser"
-    adduser -D -H -u "$PUID" -G "$group_name" "$user_name"
-else
-    addgroup "$user_name" "$group_name" >/dev/null 2>&1 || true
-fi
-
 chown -R "$PUID:$PGID" /config
 
+group_name="$(name_for_gid "$PGID" || true)"
+if [ -n "$group_name" ]; then
+    drop_identity="$PUID:$group_name"
+else
+    drop_identity="$PUID:$PGID"
+fi
+
 echo "[STARTUP] prepared /config owner=${PUID}:${PGID} umask=${UMASK} tz=${TZ}"
-exec su-exec "$user_name" "$@"
+exec su-exec "$drop_identity" "$@"

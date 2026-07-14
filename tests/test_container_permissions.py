@@ -24,7 +24,10 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn('chown -R "$PUID:$PGID" /config', entrypoint)
         self.assertNotIn("chown -R \"$PUID:$PGID\" /app", entrypoint)
         self.assertNotIn("chown -R \"$PUID:$PGID\" .", entrypoint)
-        self.assertIn('exec su-exec "$user_name" "$@"', entrypoint)
+        self.assertNotIn("adduser", entrypoint)
+        self.assertNotIn("addgroup -g", entrypoint)
+        self.assertIn('drop_identity="$PUID:$PGID"', entrypoint)
+        self.assertIn('exec su-exec "$drop_identity" "$@"', entrypoint)
 
     def test_dockerfile_keeps_application_owned_by_root(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -35,5 +38,33 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn("ENV PGID=911", dockerfile)
         self.assertIn("ENV UMASK=022", dockerfile)
         self.assertIn("su-exec", dockerfile)
-        self.assertIn('ENTRYPOINT ["/sbin/tini","--","/app/docker-entrypoint.sh"]', dockerfile)
+        self.assertIn("chown -R root:root /app", dockerfile)
+        self.assertIn("chmod -R go-w /app", dockerfile)
+        self.assertIn(
+            'ENTRYPOINT ["/sbin/tini","--","/app/docker-entrypoint.sh"]',
+            dockerfile,
+        )
 
+    def test_compose_recommends_read_only_runtime_hardening(self) -> None:
+        compose = (ROOT / "docker-compose.yml").read_text()
+
+        self.assertIn("read_only: true", compose)
+        self.assertIn("cap_drop:", compose)
+        self.assertIn("- ALL", compose)
+        self.assertIn("security_opt:", compose)
+        self.assertIn("no-new-privileges:true", compose)
+        self.assertIn("tmpfs:", compose)
+        self.assertIn("- /tmp", compose)
+        self.assertIn("bridge-config:/config", compose)
+
+    def test_runtime_image_excludes_maintenance_paths(self) -> None:
+        dockerignore = (ROOT / ".dockerignore").read_text()
+
+        self.assertIn("tests/", dockerignore)
+        self.assertIn("tools/", dockerignore)
+        self.assertIn("scripts/", dockerignore)
+
+    def test_container_hardening_validator_has_valid_shell_syntax(self) -> None:
+        script = ROOT / "scripts" / "validate" / "container_hardening.sh"
+
+        subprocess.run(["bash", "-n", str(script)], check=True)

@@ -17,6 +17,8 @@ deprecated/
 .github/
 .gitignore
 tests/
+tools/
+scripts/
 docker-compose.override.yml
 CHANGELOG.md
 CONTRIBUTING.md

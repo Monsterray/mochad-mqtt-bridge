@@ -29,6 +29,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --no-compile -r requirements.txt
 
 COPY . .
+RUN chown -R root:root /app \
+    && chmod -R go-w /app \
+    && rm -f /sbin/apk /usr/bin/wget /bin/wget
 
 ENV PUID=911
 ENV PGID=911
@@ -57,7 +60,8 @@ ENV BRIDGE_DEBUG_WIRE=false
 VOLUME ["/config"]
 
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
+RUN chown root:root /app/docker-entrypoint.sh \
+    && chmod 755 /app/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s \
             --timeout=5s \

@@ -74,6 +74,18 @@ The container starts as root only long enough to prepare writable paths, then
 drops privileges before starting the bridge. Application files remain owned by
 `root:root`; only `/config` is owned by the runtime `PUID:PGID`.
 
+The recommended Compose file runs the container with a read-only root
+filesystem, a writable `/config` volume, `/tmp` as tmpfs, all Linux
+capabilities dropped, and `no-new-privileges` enabled. The bridge health check
+uses the bundled Python runtime, so the image does not need curl, wget, netcat
+or other maintenance tools.
+
+To validate the runtime hardening contract on a Docker host:
+
+```sh
+scripts/validate/container_hardening.sh
+```
+
 ## Configuration
 
 Important environment variables:
