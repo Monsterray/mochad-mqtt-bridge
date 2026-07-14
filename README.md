@@ -76,10 +76,11 @@ builds use a digest-qualified Python base image and install dependencies from
 from Git metadata in CI so release images identify the exact source revision and
 Git commit timestamp.
 
-The Compose stack first runs a one-shot `bridge-config-init` service with only
-`CAP_CHOWN` to set the `/config` volume owner. The bridge then starts with all
-Linux capabilities dropped. Application files remain owned by `root:root`; only
-`/config` is owned by the runtime `PUID:PGID`.
+The Compose stack first runs a one-shot `bridge-config-init` service as root
+with only `CAP_CHOWN` to set the `/config` volume owner. The bridge then starts
+with all Linux capabilities dropped and `no-new-privileges` enabled.
+Application files remain owned by `root:root`; only `/config` is owned by the
+runtime `PUID:PGID`.
 
 The recommended Compose file runs the container with a read-only root
 filesystem, a writable `/config` volume, `/tmp` as tmpfs, all Linux

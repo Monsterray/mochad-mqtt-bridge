@@ -47,9 +47,9 @@ docker build --pull --tag "$IMAGE" "$ROOT_DIR"
 docker volume create "$CONFIG_VOLUME" >/dev/null
 trap cleanup EXIT
 docker run --rm \
+    --user 0:0 \
     --cap-drop ALL \
     --cap-add CHOWN \
-    --security-opt no-new-privileges:true \
     --entrypoint sh \
     -v "$CONFIG_VOLUME:/config" \
     "$IMAGE" \

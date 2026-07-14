@@ -3,6 +3,7 @@ services:
   bridge-config-init:
     image: x10-mochad-mqtt-bridge:local
     restart: "no"
+    user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
     command: chown -R "${PUID:-911}:${PGID:-911}" /config
     environment:
@@ -12,8 +13,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-    security_opt:
-      - no-new-privileges:true
     volumes:
       - bridge-config:/config
 

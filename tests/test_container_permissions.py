@@ -76,6 +76,7 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn("bridge-config:/config", compose)
         self.assertIn("bridge-config-init:", compose)
         self.assertIn("condition: service_completed_successfully", compose)
+        self.assertIn('user: "0:0"', compose)
         self.assertIn("- CHOWN", compose)
 
     def test_runtime_image_excludes_maintenance_paths(self) -> None:
