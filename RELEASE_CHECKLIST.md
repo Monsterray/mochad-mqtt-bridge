@@ -17,6 +17,9 @@ Use this checklist before publishing a GitHub release or Docker image.
 - [ ] Run `docker compose config`.
 - [ ] Build the Docker image.
 - [ ] Run `scripts/validate/container_hardening.sh` on a Docker host.
+- [ ] Validate release image labels with `scripts/validate/image_labels.py`.
+- [ ] Confirm `release/versions.env` pins the expected digest-qualified base image.
+- [ ] Archive runtime package evidence from `/usr/share/mochad-mqtt-bridge/apk-info.txt`.
 - [ ] Run README first-run smoke checks against a real MQTT broker and `mochad`.
 - [ ] Confirm MQTT topics still use `/command`, not `/set`.
 - [ ] Confirm Home Assistant discovery `unique_id` values remain address-based.
