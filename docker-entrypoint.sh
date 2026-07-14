@@ -45,7 +45,14 @@ if [ "$(id -u)" != "0" ]; then
     exec "$@"
 fi
 
-chown -R "$PUID:$PGID" /config
+config_owner="$(stat -c '%u:%g' /config)"
+requested_owner="$PUID:$PGID"
+if [ "$config_owner" != "$requested_owner" ]; then
+    if ! chown -R "$requested_owner" /config; then
+        echo "[STARTUP] cannot prepare /config owner=${requested_owner}; pre-own the volume or use the Compose config initializer" >&2
+        exit 73
+    fi
+fi
 
 group_name="$(name_for_gid "$PGID" || true)"
 if [ -n "$group_name" ]; then

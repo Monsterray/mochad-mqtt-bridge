@@ -3,6 +3,8 @@ set -euo pipefail
 
 IMAGE="${IMAGE:-x10-mochad-mqtt-bridge:hardening}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONFIG_VOLUME="bridge-hardening-config-$$"
+container_id=""
 
 log() {
     printf '[container-hardening] %s\n' "$*"
@@ -24,13 +26,34 @@ run_in_image() {
         -e PUID=12345 \
         -e PGID=23456 \
         -e UMASK=022 \
+        -v "$CONFIG_VOLUME:/config" \
         "$IMAGE" "$@"
+}
+
+cleanup() {
+    if [ -n "$container_id" ]; then
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+    fi
+    docker volume rm "$CONFIG_VOLUME" >/dev/null 2>&1 || true
 }
 
 require_docker
 
 log "building $IMAGE"
 docker build --pull --tag "$IMAGE" "$ROOT_DIR"
+
+# The bridge intentionally has no capabilities. Prepare the test volume with
+# the same narrowly scoped CAP_CHOWN initializer used by Docker Compose.
+docker volume create "$CONFIG_VOLUME" >/dev/null
+trap cleanup EXIT
+docker run --rm \
+    --cap-drop ALL \
+    --cap-add CHOWN \
+    --security-opt no-new-privileges:true \
+    --entrypoint sh \
+    -v "$CONFIG_VOLUME:/config" \
+    "$IMAGE" \
+    -ec 'chown -R 12345:23456 /config'
 
 log "verifying runtime identity, writable paths and absent tools"
 run_in_image sh -eu -c '
@@ -55,10 +78,10 @@ container_id="$(
         -e PUID=12345 \
         -e PGID=23456 \
         -e UMASK=002 \
+        -v "$CONFIG_VOLUME:/config" \
         "$IMAGE" \
         sh -eu -c 'touch /config/umask-test && sleep 300'
 )"
-trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 
 docker exec "$container_id" sh -eu -c '
     test "$(stat -c %u /config/umask-test)" = "12345"
@@ -67,6 +90,6 @@ docker exec "$container_id" sh -eu -c '
 '
 
 docker rm -f "$container_id" >/dev/null
-trap - EXIT
+container_id=""
 
 log "passed"

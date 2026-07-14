@@ -22,7 +22,9 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn('UMASK="${UMASK:-022}"', entrypoint)
         self.assertIn('ALLOW_ROOT="${ALLOW_ROOT:-false}"', entrypoint)
         self.assertIn('mkdir -p /config', entrypoint)
-        self.assertIn('chown -R "$PUID:$PGID" /config', entrypoint)
+        self.assertIn('chown -R "$requested_owner" /config', entrypoint)
+        self.assertIn('stat -c', entrypoint)
+        self.assertIn('cannot prepare /config', entrypoint)
         self.assertNotIn("chown -R \"$PUID:$PGID\" /app", entrypoint)
         self.assertNotIn("chown -R \"$PUID:$PGID\" .", entrypoint)
         self.assertNotIn("adduser", entrypoint)
@@ -72,6 +74,9 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn("tmpfs:", compose)
         self.assertIn("- /tmp", compose)
         self.assertIn("bridge-config:/config", compose)
+        self.assertIn("bridge-config-init:", compose)
+        self.assertIn("condition: service_completed_successfully", compose)
+        self.assertIn("- CHOWN", compose)
 
     def test_runtime_image_excludes_maintenance_paths(self) -> None:
         dockerignore = (ROOT / ".dockerignore").read_text()
