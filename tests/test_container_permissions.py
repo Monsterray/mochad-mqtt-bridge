@@ -63,20 +63,10 @@ class ContainerPermissionsTests(unittest.TestCase):
         ):
             self.assertNotIn(f"ENV {variable}=", dockerfile)
 
-    def test_compose_recommends_read_only_runtime_hardening(self) -> None:
+    def test_compose_mounts_persistent_config(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text()
 
-        self.assertIn("read_only: true", compose)
-        self.assertIn("cap_drop:", compose)
-        self.assertIn("- ALL", compose)
-        self.assertIn("security_opt:", compose)
-        self.assertIn("no-new-privileges:true", compose)
-        self.assertIn("tmpfs:", compose)
-        self.assertIn("- /tmp", compose)
         self.assertIn("bridge-config:/config", compose)
-        self.assertIn("bridge-config-init:", compose)
-        self.assertIn("condition: service_completed_successfully", compose)
-        self.assertIn('user: "0:0"', compose)
 
     def test_runtime_image_excludes_maintenance_paths(self) -> None:
         dockerignore = (ROOT / ".dockerignore").read_text()
@@ -84,9 +74,6 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn("tests/", dockerignore)
         self.assertIn("tools/", dockerignore)
         self.assertIn("scripts/", dockerignore)
-
-    def test_container_hardening_validator_has_valid_shell_syntax(self) -> None:
-        script = ROOT / "scripts" / "validate" / "container_hardening.sh"
 
     def test_secrets_compose_uses_run_secrets_and_file_env_vars(self) -> None:
         compose = (ROOT / "docker-compose.secrets.yml").read_text()

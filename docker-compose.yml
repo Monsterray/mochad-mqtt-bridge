@@ -1,17 +1,5 @@
 ---
 services:
-  bridge-config-init:
-    image: x10-mochad-mqtt-bridge:local
-    restart: "no"
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-ec"]
-    command: chown -R "${PUID:-911}:${PGID:-911}" /config
-    environment:
-      PUID: ${PUID:-911}
-      PGID: ${PGID:-911}
-    volumes:
-      - bridge-config:/config
-
   mochad-mqtt-bridge:
     build:
       context: .
@@ -19,16 +7,6 @@ services:
     image: x10-mochad-mqtt-bridge:local
     container_name: mochad-mqtt-bridge
     restart: unless-stopped
-    depends_on:
-      bridge-config-init:
-        condition: service_completed_successfully
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp
 
     environment:
       PUID: ${PUID:-911}

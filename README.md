@@ -76,22 +76,11 @@ builds use a digest-qualified Python base image and install dependencies from
 from Git metadata in CI so release images identify the exact source revision and
 Git commit timestamp.
 
-The Compose stack first runs a one-shot `bridge-config-init` service as root to
-set the `/config` volume owner. The bridge then starts with all Linux
-capabilities dropped and `no-new-privileges` enabled. Application files remain
-owned by `root:root`; only `/config` is owned by the runtime `PUID:PGID`.
-
-The recommended Compose file runs the container with a read-only root
-filesystem, a writable `/config` volume, `/tmp` as tmpfs, all Linux
-capabilities dropped, and `no-new-privileges` enabled. The bridge health check
-uses the bundled Python runtime, so the image does not need curl, wget, netcat
-or other maintenance tools.
-
-To validate the runtime hardening contract on a Docker host:
-
-```sh
-scripts/validate/container_hardening.sh
-```
+The container starts as root only long enough to prepare `/config`, then drops
+to the configured `PUID:PGID` before starting the bridge. Application files
+remain owned by `root:root`; only `/config` is made writable by the runtime
+identity. The bridge health check uses the bundled Python runtime, so the image
+does not need curl, wget, netcat, or other maintenance tools.
 
 ## Configuration
 
@@ -138,9 +127,7 @@ defaults are `PUID=911`, `PGID=911`, `TZ=UTC`, and `UMASK=022`. If Compose
 `user:` is set, Docker bypasses this root initialization step; in that mode,
 pre-own mounted volumes and provide any required `group_add` values yourself.
 That mode is intended for externally managed deployments. The normal Compose
-path is to leave `user:` unset and use `PUID`, `PGID`, and `UMASK`. For direct
-`docker run` deployments with all capabilities dropped, pre-own the mounted
-`/config` directory or run an equivalent one-shot ownership initializer first.
+path is to leave `user:` unset and use `PUID`, `PGID`, and `UMASK`.
 
 `MOCHAD_PORT` should point at the main mochad TCP listener. The default is
 `1099`, and the bridge expects newline-delimited mochad events and diagnostic

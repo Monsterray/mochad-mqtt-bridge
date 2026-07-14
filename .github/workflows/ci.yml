@@ -94,11 +94,6 @@ jobs:
           name: bridge-runtime-apk-info
           path: apk-info.txt
 
-      - name: Validate container hardening
-        env:
-          IMAGE: x10-mochad-mqtt-bridge:ci
-        run: scripts/validate/container_hardening.sh
-
       - name: Validate container permissions
         env:
           IMAGE: x10-mochad-mqtt-bridge:ci
