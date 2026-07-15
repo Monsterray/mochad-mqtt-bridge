@@ -49,7 +49,7 @@ def main() -> int:
 
     status, timestamp = parts
 
-    if status != "running":
+    if status not in {"starting", "running"}:
         print(f"unhealthy: status={status}", file=sys.stderr)
         return 1
 

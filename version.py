@@ -12,4 +12,6 @@ BRIDGE_AUTHOR = "Open Source"
 
 SUPPORTED_MOCHAD = "0.1.18"
 
-SUPPORTED_PYTHON = (3, 11)
+# The compatibility workflow verifies every supported minor from this floor
+# through the latest version currently listed in its test matrix.
+SUPPORTED_PYTHON = (3, 10)

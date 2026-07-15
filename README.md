@@ -123,7 +123,9 @@ BRIDGE_DEBUG_WIRE
 ```
 
 The variables above match the bridge runtime configuration in `config.py`.
-`BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check.
+`BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check. The check
+reports healthy while the bridge is starting or reconnecting; MQTT and mochad
+availability remain visible in the retained bridge status document.
 
 `PUID`, `PGID`, `TZ`, and `UMASK` control container runtime permissions. The
 defaults are `PUID=911`, `PGID=911`, `TZ=UTC`, and `UMASK=022`. If Compose

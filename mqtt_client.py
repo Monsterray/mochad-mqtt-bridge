@@ -23,6 +23,8 @@ from topics import Topics
 _LOG = logging.getLogger(__name__)
 _LOG.addHandler(logging.NullHandler())
 
+PUBLISH_WAIT_TIMEOUT_SECONDS = 5.0
+
 
 Payload = str | bytes | int | float | bool | dict | list | None
 
@@ -283,7 +285,23 @@ class MqttClient:
         if wait:
             wait_for_publish = getattr(result, "wait_for_publish", None)
             if callable(wait_for_publish):
-                wait_for_publish()
+                try:
+                    wait_for_publish(timeout=PUBLISH_WAIT_TIMEOUT_SECONDS)
+                except (RuntimeError, TypeError) as exc:
+                    _LOG.warning(
+                        "MQTT publish delivery wait failed topic=%s error=%s",
+                        topic,
+                        exc,
+                    )
+                    return
+
+                is_published = getattr(result, "is_published", None)
+                if callable(is_published) and not is_published():
+                    _LOG.warning(
+                        "MQTT publish delivery timed out topic=%s timeout=%.1fs",
+                        topic,
+                        PUBLISH_WAIT_TIMEOUT_SECONDS,
+                    )
 
     def publish_discovery(
         self,

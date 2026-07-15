@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+from pathlib import Path
+import shutil
 import socket
+import subprocess
 import threading
 import time
 
@@ -17,6 +21,27 @@ def _unused_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+@contextlib.contextmanager
+def _mosquitto(tmp_path: Path, port: int):
+    if shutil.which("mosquitto") is None:
+        pytest.skip("mosquitto is required for actual MQTT lifecycle coverage")
+
+    config = tmp_path / "mosquitto.conf"
+    config.write_text(
+        f"persistence false\nallow_anonymous true\nlistener {port} 127.0.0.1\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(["mosquitto", "-c", str(config)])
+    try:
+        yield
+    finally:
+        process.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=3)
+        if process.poll() is None:
+            process.kill()
 
 
 class UnavailablePaho:
@@ -82,6 +107,28 @@ def test_mqtt_broker_down_at_boot_does_not_raise_or_block_shutdown():
     assert unavailable.started is True
     assert unavailable.stopped is True
     assert time.monotonic() - started < 0.25
+
+
+@pytest.mark.lifecycle
+def test_actual_mqtt_client_recovers_when_broker_appears(tmp_path):
+    port = _unused_port()
+    connected = threading.Event()
+    client = MqttClient(
+        "127.0.0.1",
+        port=port,
+        reconnect_min_delay=1,
+        reconnect_max_delay=1,
+    )
+    client.set_connect_callback(connected.set)
+
+    try:
+        client.connect()
+        assert not connected.wait(0.2)
+        with _mosquitto(tmp_path, port):
+            assert connected.wait(5.0)
+            assert client.connected
+    finally:
+        client.disconnect()
 
 
 @pytest.mark.lifecycle

@@ -13,6 +13,11 @@ Require these checks before merging:
 - `Bridge Lifecycle CI / lifecycle`
 - `Bridge Container CI / container`
 
+`Bridge Python Compatibility` intentionally exercises the wider Python 3.10
+through 3.14 matrix. Keep it advisory until its first runs establish the
+supported range, then add its passing versions to the required checks if that
+matches the release policy.
+
 `Bridge Multiarch CI / build` is build-only validation. Require it before
 release tagging, or on release branches, rather than blocking every small fix.
 

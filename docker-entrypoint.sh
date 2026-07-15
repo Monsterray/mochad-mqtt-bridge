@@ -49,7 +49,7 @@ config_owner="$(stat -c '%u:%g' /config)"
 requested_owner="$PUID:$PGID"
 if [ "$config_owner" != "$requested_owner" ]; then
     if ! chown -R "$requested_owner" /config; then
-        echo "[STARTUP] cannot prepare /config owner=${requested_owner}; pre-own the volume or use the Compose config initializer" >&2
+        echo "[STARTUP] cannot prepare /config owner=${requested_owner}; pre-own the mounted volume or run the container with permission to change /config ownership" >&2
         exit 73
     fi
 fi

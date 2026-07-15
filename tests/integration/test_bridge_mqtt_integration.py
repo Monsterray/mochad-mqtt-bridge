@@ -9,6 +9,7 @@ import queue
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import uuid
 
@@ -77,6 +78,7 @@ def _mosquitto(tmp_path: Path, port: int):
 def test_known_mochad_input_publishes_mqtt_and_mqtt_command_reaches_mochad(tmp_path):
     mqtt_port = _free_port()
     received: queue.Queue[tuple[str, str, bool]] = queue.Queue()
+    subscribed = threading.Event()
     subscriber = paho.Client(
         paho.CallbackAPIVersion.VERSION2,
         client_id=f"bridge-test-sub-{uuid.uuid4()}",
@@ -85,21 +87,26 @@ def test_known_mochad_input_publishes_mqtt_and_mqtt_command_reaches_mochad(tmp_p
     def on_message(client, userdata, message):
         received.put((message.topic, message.payload.decode(), message.retain))
 
+    def on_subscribe(*args):
+        subscribed.set()
+
     subscriber.on_message = on_message
+    subscriber.on_subscribe = on_subscribe
 
     with _mosquitto(tmp_path, mqtt_port), FakeMochadServer(
         [
             ScriptedLine(
                 "07/11 12:00:01 Rx RF HouseUnit: A1 Func: On",
-                delay=0.2,
+                delay=0.05,
                 partial_at=18,
             )
         ]
     ) as fake_mochad:
         fake_mochad.wait_until_ready()
         subscriber.connect("127.0.0.1", mqtt_port)
-        subscriber.subscribe("#")
         subscriber.loop_start()
+        subscriber.subscribe("#")
+        assert subscribed.wait(3.0)
         bridge = Bridge(
             Config(
                 mochad_host=fake_mochad.host,
@@ -126,7 +133,11 @@ def test_known_mochad_input_publishes_mqtt_and_mqtt_command_reaches_mochad(tmp_p
                     messages.append(received.get(timeout=0.1))
                 except queue.Empty:
                     continue
-                if any(topic == "x10/A1/event" for topic, _, _ in messages):
+                topics = {topic for topic, _, _ in messages}
+                if {
+                    "x10/A1/event",
+                    "homeassistant/switch/x10_A1/config",
+                } <= topics:
                     break
 
             event_messages = [item for item in messages if item[0] == "x10/A1/event"]

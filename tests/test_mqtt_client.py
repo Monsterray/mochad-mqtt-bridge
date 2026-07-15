@@ -14,8 +14,11 @@ class FakePublishResult:
     def __init__(self, client):
         self.client = client
 
-    def wait_for_publish(self):
-        self.client.calls.append("wait_for_publish")
+    def wait_for_publish(self, timeout=None):
+        self.client.calls.append(("wait_for_publish", timeout))
+
+    def is_published(self):
+        return True
 
 
 class FakePahoClient:
@@ -319,7 +322,7 @@ class MqttClientRoutingTests(unittest.TestCase):
             fake.published,
             [("x10/bridge/status", '{"status":"shutdown"}', 1, True)],
         )
-        self.assertIn("wait_for_publish", fake.calls)
+        self.assertIn(("wait_for_publish", 5.0), fake.calls)
 
 
 if __name__ == "__main__":
