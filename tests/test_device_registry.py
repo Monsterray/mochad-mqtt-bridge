@@ -2,7 +2,7 @@ import os
 import tempfile
 import json
 import unittest
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from config import create_config_file_if_missing, load_config
@@ -224,7 +224,7 @@ class DeviceCapabilityStateTests(unittest.TestCase):
 
         all_lights_actions = state.apply(
             HouseEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
                 direction=None,  # type: ignore[arg-type]
                 transport=None,  # type: ignore[arg-type]
                 command=Command.ALL_LIGHTS_ON,
@@ -238,7 +238,7 @@ class DeviceCapabilityStateTests(unittest.TestCase):
 
         all_units_actions = state.apply(
             HouseEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
                 direction=None,  # type: ignore[arg-type]
                 transport=None,  # type: ignore[arg-type]
                 command=Command.ALL_UNITS_OFF,
