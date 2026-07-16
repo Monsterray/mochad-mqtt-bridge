@@ -6,6 +6,8 @@ This project follows semantic versioning once releases begin.
 
 ## [Unreleased]
 
+## [0.4.0] - Unreleased
+
 ### Fixed
 
 - Docker builds now collect installed Alpine package evidence without attempting
@@ -34,7 +36,3 @@ This project follows semantic versioning once releases begin.
 ### Known Gaps
 
 - Discovery cleanup for removed configured devices is planned future work.
-
-## [0.1.0] - Unreleased
-
-- First release candidate baseline.

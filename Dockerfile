@@ -3,7 +3,7 @@ FROM ${PYTHON_BASE_IMAGE}
 
 ARG IMAGE_CREATED
 ARG IMAGE_REVISION
-ARG IMAGE_VERSION=0.1.0
+ARG IMAGE_VERSION=0.4.0
 ARG IMAGE_SOURCE=https://github.com/Monsterray/mochad-mqtt-bridge
 
 LABEL org.opencontainers.image.title="mochad-mqtt-bridge"
@@ -26,12 +26,14 @@ RUN apk add --no-cache \
     tini \
     tzdata \
     && mkdir -p /usr/share/mochad-mqtt-bridge \
+    && mkdir -p /usr/share/licenses/mochad-mqtt-bridge \
     && apk info > /usr/share/mochad-mqtt-bridge/apk-info.txt \
     && mkdir -p /config
 
 COPY requirements.txt requirements.release.txt ./
 RUN pip install --no-cache-dir --no-compile --require-hashes -r requirements.release.txt
 
+COPY LICENSE.md /usr/share/licenses/mochad-mqtt-bridge/LICENSE.md
 COPY . .
 RUN chown -R root:root /app \
     && chmod -R go-w /app \

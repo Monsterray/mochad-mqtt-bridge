@@ -9,7 +9,7 @@ VALID_LABELS = {
     "org.opencontainers.image.title": "mochad-mqtt-bridge",
     "org.opencontainers.image.description": "MQTT bridge",
     "org.opencontainers.image.created": "2026-07-13T12:34:56-07:00",
-    "org.opencontainers.image.version": "0.1.0",
+    "org.opencontainers.image.version": "0.4.0",
     "org.opencontainers.image.revision": "a" * 40,
     "org.opencontainers.image.source": (
         "https://github.com/Monsterray/mochad-mqtt-bridge"
@@ -48,6 +48,7 @@ class ReleaseImageInputTests(unittest.TestCase):
 
         self.assertIn("PYTHON_BASE_IMAGE=python:3.12-alpine@sha256:", versions)
         self.assertIn("IMAGE_NAME=ghcr.io/monsterray/mochad-mqtt-bridge", versions)
+        self.assertIn("IMAGE_VERSION=0.4.0", versions)
 
     def test_release_requirements_are_hash_checked(self) -> None:
         requirements = (ROOT / "requirements.release.txt").read_text()
@@ -61,6 +62,10 @@ class ReleaseImageInputTests(unittest.TestCase):
         self.assertIn("ARG PYTHON_BASE_IMAGE=", dockerfile)
         self.assertIn("FROM ${PYTHON_BASE_IMAGE}", dockerfile)
         self.assertIn("--require-hashes -r requirements.release.txt", dockerfile)
+        self.assertIn(
+            "COPY LICENSE.md /usr/share/licenses/mochad-mqtt-bridge/LICENSE.md",
+            dockerfile,
+        )
         self.assertIn('LABEL org.opencontainers.image.created="${IMAGE_CREATED}"', dockerfile)
         self.assertIn('LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"', dockerfile)
 
@@ -69,6 +74,18 @@ class ReleaseImageInputTests(unittest.TestCase):
 
         self.assertIn("apk info > /usr/share/mochad-mqtt-bridge/apk-info.txt", dockerfile)
         self.assertNotIn("apk info -vv", dockerfile)
+
+    def test_release_workflow_publishes_tagged_images_and_release(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-image.yml").read_text()
+
+        self.assertIn("packages: write", workflow)
+        self.assertIn("docker/login-action@v4", workflow)
+        self.assertIn("platforms: linux/amd64,linux/arm64", workflow)
+        self.assertIn("push: ${{ github.ref_type == 'tag' }}", workflow)
+        self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/master', workflow)
+        self.assertIn("must date the $version release as YYYY-MM-DD", workflow)
+        self.assertIn('gh release create "$GITHUB_REF_NAME"', workflow)
+        self.assertIn("--notes-file /tmp/release-notes.md", workflow)
 
 
 if __name__ == "__main__":

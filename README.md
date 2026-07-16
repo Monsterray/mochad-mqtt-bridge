@@ -1,7 +1,7 @@
 # MQTT Mochad Bridge
 
-![Status](https://img.shields.io/badge/status-integration%20testing-yellow)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Status](https://img.shields.io/badge/status-release%20candidate-yellow)
+![Version](https://img.shields.io/badge/version-0.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 MQTT Mochad Bridge connects a running `mochad` TCP service to MQTT so X10
@@ -12,9 +12,9 @@ does not pin `mochad`; the bridge connects to an external `mochad` TCP service.
 
 ## Status
 
-Integration testing is in progress.
+Version 0.4.0 is in release-candidate validation.
 
-Project version: `0.1.0`
+Project version: `0.4.0`
 
 Tested with:
 
@@ -55,20 +55,22 @@ default. Set `MQTT_DOCKER_NETWORK` if your broker is on a different network.
 ## Docker Image
 
 The compose file builds the image locally for development and first-run testing.
-When published images are enabled later, the intended image name is:
+Version tags publish multi-platform release images to:
 
 ```text
 ghcr.io/monsterray/mochad-mqtt-bridge
 ```
 
-To use a published image in the future, replace the compose `build:` block with
-an `image:` reference such as:
+To use a published image, replace the compose `build:` block with an `image:`
+reference such as:
 
 ```yaml
-image: ghcr.io/monsterray/mochad-mqtt-bridge:0.1.0
+image: ghcr.io/monsterray/mochad-mqtt-bridge:0.4.0
 ```
 
-No GitHub Container Registry publishing workflow is enabled yet.
+Pushing a matching `v*` tag publishes `linux/amd64` and `linux/arm64` images
+with SBOM and provenance attestations, then creates the GitHub Release. Manual
+workflow runs build without publishing.
 
 Release image inputs are tracked in `release/versions.env`. Release Docker
 builds use a digest-qualified Python base image and install dependencies from

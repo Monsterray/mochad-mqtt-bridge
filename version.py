@@ -6,7 +6,7 @@ Bridge version information.
 
 BRIDGE_NAME = "mqtt-mochad-bridge"
 
-BRIDGE_VERSION = "0.1.0"
+BRIDGE_VERSION = "0.4.0"
 
 BRIDGE_AUTHOR = "Open Source"
 
