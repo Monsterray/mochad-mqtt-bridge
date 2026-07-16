@@ -6,6 +6,11 @@ This project follows semantic versioning once releases begin.
 
 ## [Unreleased]
 
+### Fixed
+
+- Docker builds now collect installed Alpine package evidence without attempting
+  to read removed APK repository cache indexes.
+
 ### Added
 
 - Initial MQTT bridge implementation for a running `mochad` TCP service.

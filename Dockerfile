@@ -26,7 +26,7 @@ RUN apk add --no-cache \
     tini \
     tzdata \
     && mkdir -p /usr/share/mochad-mqtt-bridge \
-    && apk info -vv > /usr/share/mochad-mqtt-bridge/apk-info.txt \
+    && apk info > /usr/share/mochad-mqtt-bridge/apk-info.txt \
     && mkdir -p /config
 
 COPY requirements.txt requirements.release.txt ./

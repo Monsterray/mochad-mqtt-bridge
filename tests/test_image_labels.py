@@ -64,6 +64,12 @@ class ReleaseImageInputTests(unittest.TestCase):
         self.assertIn('LABEL org.opencontainers.image.created="${IMAGE_CREATED}"', dockerfile)
         self.assertIn('LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"', dockerfile)
 
+    def test_dockerfile_collects_apk_evidence_without_repository_cache_access(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text()
+
+        self.assertIn("apk info > /usr/share/mochad-mqtt-bridge/apk-info.txt", dockerfile)
+        self.assertNotIn("apk info -vv", dockerfile)
+
 
 if __name__ == "__main__":
     unittest.main()
