@@ -1107,6 +1107,10 @@ class Bridge:
         return address[0] in self.config.x10_housecodes
 
     def _publish_bridge_diagnostic_discovery(self) -> None:
+        if not self.config.discovery_enabled:
+            _LOG.info("MQTT discovery is disabled; skipping bridge diagnostics")
+            return
+
         for message in self.discovery.bridge_diagnostic_messages(
             self._mochad_diagnostics
         ):
@@ -1118,6 +1122,10 @@ class Bridge:
             self.clients.mqtt.publish_discovery(message)
 
     def _publish_current_discovery(self) -> int:
+        if not self.config.discovery_enabled:
+            _LOG.info("MQTT discovery is disabled; skipping entity publication")
+            return 0
+
         messages: list[DiscoveryMessage] = []
 
         for device in self.devices.values():
@@ -1148,6 +1156,16 @@ class Bridge:
         self,
         force: bool,
     ) -> dict:
+        if not self.config.discovery_enabled:
+            return {
+                "success": True,
+                "message": "MQTT discovery is disabled.",
+                "desired": 0,
+                "tracked": 0,
+                "stale": 0,
+                "cleanup_enabled": self.config.discovery_cleanup,
+            }
+
         desired_topics = self._desired_discovery_topics()
 
         if not force and not self.config.discovery_cleanup:
@@ -1229,6 +1247,13 @@ class Bridge:
         }
 
     def _reset_discovery(self) -> dict:
+        if not self.config.discovery_enabled:
+            return {
+                "success": True,
+                "message": "MQTT discovery is disabled.",
+                "cleared": 0,
+            }
+
         desired_topics = self._desired_discovery_topics()
 
         try:
@@ -1262,6 +1287,9 @@ class Bridge:
         }
 
     def _desired_discovery_topics(self) -> set[str]:
+        if not self.config.discovery_enabled:
+            return set()
+
         messages = []
 
         for device in self.devices.values():

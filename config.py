@@ -970,6 +970,11 @@ def load_config() -> Config:
             False,
         ),
 
+        discovery_enabled=_get_bool(
+            "MQTT_DISCOVERY_ENABLED",
+            True,
+        ),
+
         discovery_registry_path=_get_env(
             "DISCOVERY_REGISTRY_PATH",
             DEFAULT_DISCOVERY_REGISTRY_PATH,

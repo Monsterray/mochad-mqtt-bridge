@@ -13,6 +13,18 @@ from models import Command, DeviceType
 
 
 class ConfigTests(unittest.TestCase):
+    def test_mqtt_discovery_defaults_to_enabled(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(load_config().discovery_enabled)
+
+    def test_mqtt_discovery_can_be_disabled(self):
+        with patch.dict(
+            os.environ,
+            {"MQTT_DISCOVERY_ENABLED": "false"},
+            clear=True,
+        ):
+            self.assertFalse(load_config().discovery_enabled)
+
     def test_maintenance_buttons_default_to_disabled(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(load_config().enable_maintenance_buttons)

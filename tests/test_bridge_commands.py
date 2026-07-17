@@ -137,6 +137,27 @@ class BridgeCommandParsingTests(unittest.TestCase):
 
 
 class BridgeDiscoveryPruneTests(unittest.TestCase):
+    def test_disabled_discovery_publishes_no_entity_or_diagnostic_messages(self):
+        mqtt = FakeMqttClient()
+        config = replace(
+            minimal_config(
+                devices={
+                    "A1": DeviceConfig(
+                        address="A1",
+                        name="Lab Lamp",
+                        entity_type=DeviceType.LIGHT,
+                    )
+                }
+            ),
+            discovery_enabled=False,
+        )
+        bridge = Bridge(config, mqtt_client=mqtt, mochad_client=FakeMochadClient())
+
+        self.assertEqual(bridge._publish_current_discovery(), 0)
+        bridge._publish_bridge_diagnostic_discovery()
+        self.assertEqual(mqtt.discovery_messages, [])
+        self.assertEqual(bridge._desired_discovery_topics(), set())
+
     def test_cleanup_disabled_preserves_stale_registry_topics_for_manual_prune(self):
         with tempfile.TemporaryDirectory() as directory:
             registry_path = f"{directory}/discovery_registry.json"
