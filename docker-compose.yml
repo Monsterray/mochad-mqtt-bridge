@@ -13,6 +13,7 @@ services:
       PGID: ${PGID:-911}
       TZ: ${TZ:-UTC}
       UMASK: ${UMASK:-022}
+      ALLOW_ROOT: ${ALLOW_ROOT:-false}
       MOCHAD_HOST: ${MOCHAD_HOST:-mochad}
       MOCHAD_PORT: ${MOCHAD_PORT:-1099}
       MQTT_HOST: ${MQTT_HOST:-mosquitto}

@@ -9,6 +9,7 @@ from config import (
     create_config_file_if_missing,
     load_config,
 )
+from models import Command, DeviceType
 
 
 class ConfigTests(unittest.TestCase):
@@ -294,6 +295,21 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.devices["A1"].command_repeats, 3)
         self.assertEqual(config.devices["A1"].command_repeat_delay_ms, 200)
+
+    def test_env_devices_can_define_action_only_chime(self):
+        with patch.dict(
+            os.environ,
+            {
+                "X10_DEVICES": "A2:Door Chime:chime",
+            },
+            clear=True,
+        ):
+            config = load_config()
+
+        device = config.devices["A2"]
+        self.assertEqual(device.entity_type, DeviceType.CHIME)
+        self.assertFalse(device.stateful)
+        self.assertEqual(device.supported_commands, frozenset({Command.ON}))
 
     def test_json_devices_can_configure_command_repeats(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:

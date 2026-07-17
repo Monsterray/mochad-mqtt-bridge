@@ -2,8 +2,8 @@
 
 ## Supported Versions
 
-This project is pre-release. Security fixes are applied to the current `main`
-branch until versioned releases begin.
+Security fixes are applied to the current `master` release branch and integrated
+through `develop`. Version 0.4.x is the first supported public release line.
 
 ## Reporting a Vulnerability
 

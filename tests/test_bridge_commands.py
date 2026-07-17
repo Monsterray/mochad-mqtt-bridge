@@ -1,8 +1,11 @@
+from dataclasses import replace
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from bridge import Bridge
 from config import Config, MqttTlsConfig
+from discovery_registry import DiscoveryRegistry
 from mqtt_client import MqttCommandMessage
 from models import BridgeCommand, DeviceConfig, DeviceType
 
@@ -14,6 +17,11 @@ class FakeMqttClient:
         self.discovery_messages = []
         self.states = []
         self.attributes = []
+        self.events = []
+        self.status_payloads = []
+        self.availability = []
+        self.bridge_responses = []
+        self.disconnected = False
 
     def set_command_callback(self, callback):
         self.command_callback = callback
@@ -36,12 +44,32 @@ class FakeMqttClient:
     def publish_attributes(self, device, payload, retain=True):
         self.attributes.append((device, payload, retain))
 
+    def publish_event(self, device, payload, retain=False):
+        self.events.append((device, payload, retain))
+
+    def connect(self):
+        self.connected = True
+
+    def publish_status(self, payload, retain=True, qos=0, wait=False):
+        self.status_payloads.append((payload, retain, qos, wait))
+
+    def publish_availability(self, online, retain=True, qos=0, wait=False):
+        self.availability.append((online, retain, qos, wait))
+
+    def publish_bridge_response(self, payload, retain=False):
+        self.bridge_responses.append((payload, retain))
+
+    def disconnect(self):
+        self.connected = False
+        self.disconnected = True
+
 
 class FakeMochadClient:
     connected = True
 
     def __init__(self):
         self.sent_lines = []
+        self.stopped = False
 
     def set_line_callback(self, callback):
         self.line_callback = callback
@@ -54,6 +82,13 @@ class FakeMochadClient:
 
     def send_line(self, line):
         self.sent_lines.append(line)
+
+    def start(self):
+        self.connected = True
+
+    def stop(self):
+        self.connected = False
+        self.stopped = True
 
 
 def minimal_config(
@@ -99,6 +134,88 @@ class BridgeCommandParsingTests(unittest.TestCase):
         self.assertIsNone(
             Bridge._parse_bridge_command_payload("not-a-command")
         )
+
+
+class BridgeDiscoveryPruneTests(unittest.TestCase):
+    def test_cleanup_disabled_preserves_stale_registry_topics_for_manual_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = f"{directory}/discovery_registry.json"
+            registry = DiscoveryRegistry(registry_path)
+            registry.save(
+                {
+                    "homeassistant/light/x10_A1/config",
+                    "homeassistant/switch/x10_A2/config",
+                }
+            )
+            bridge = Bridge(
+                minimal_config(
+                    devices={
+                        "A1": DeviceConfig(
+                            address="A1",
+                            name="Lamp",
+                            entity_type=DeviceType.LIGHT,
+                        )
+                    }
+                ),
+                mqtt_client=FakeMqttClient(),
+                mochad_client=FakeMochadClient(),
+            )
+            bridge.discovery_registry = registry
+
+            result = bridge._run_discovery_cleanup(force=False)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["stale"], 1)
+            self.assertIn(
+                "homeassistant/switch/x10_A2/config",
+                registry.load(),
+            )
+
+    def test_prune_button_clears_stale_registry_topics_and_saves_desired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = f"{directory}/discovery_registry.json"
+            registry = DiscoveryRegistry(registry_path)
+            registry.save(
+                {
+                    "homeassistant/light/x10_A1/config",
+                    "homeassistant/switch/x10_A2/config",
+                }
+            )
+            mqtt = FakeMqttClient()
+            bridge = Bridge(
+                minimal_config(
+                    devices={
+                        "A1": DeviceConfig(
+                            address="A1",
+                            name="Lamp",
+                            entity_type=DeviceType.LIGHT,
+                        )
+                    }
+                ),
+                mqtt_client=mqtt,
+                mochad_client=FakeMochadClient(),
+            )
+            bridge.config = replace(
+                bridge.config,
+                enable_maintenance_buttons=True,
+            )
+            bridge.discovery_registry = registry
+
+            bridge._handle_bridge_command(BridgeCommand.PRUNE_DISCOVERY)
+
+            cleared = [
+                message
+                for message in mqtt.discovery_messages
+                if message.topic == "homeassistant/switch/x10_A2/config"
+                and message.payload == ""
+                and message.retain
+            ]
+            self.assertEqual(len(cleared), 1)
+            self.assertNotIn(
+                "homeassistant/switch/x10_A2/config",
+                registry.load(),
+            )
+            self.assertTrue(mqtt.bridge_responses[-1][0]["success"])
 
 
 class DeviceCommandRoutingTests(unittest.TestCase):
@@ -197,6 +314,324 @@ class DeviceCommandRoutingTests(unittest.TestCase):
 
         self.assertEqual(mochad.sent_lines, ["rf A1 dim"])
         sleep.assert_not_called()
+
+    def test_device_command_queues_until_usb_is_ready(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": false, "controller": "CM19A", '
+            '"endpoints_ready": false, "transfers_ready": false}'
+        )
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A1",
+                payload="ON",
+                topic="x10/A1/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states[-1][0], "A1")
+        self.assertEqual(
+            bridge._bridge_status_payload()["queued_device_commands"],
+            1,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": true, "controller": "CM19A", '
+            '"endpoints_ready": true, "transfers_ready": true}'
+        )
+
+        self.assertEqual(mochad.sent_lines, ["rf A1 on"])
+        self.assertEqual(
+            bridge._bridge_status_payload()["queued_device_commands"],
+            0,
+        )
+
+    def test_queued_device_commands_flush_in_order(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mochad_line(
+            '{"usb_connected": false, "controller": "CM19A"}'
+        )
+        for device, payload in (("A1", "ON"), ("A2", "OFF")):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device=device,
+                    payload=payload,
+                    topic=f"x10/{device}/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, [])
+
+        bridge._on_mochad_line(
+            '{"usb_connected": true, "controller": "CM19A", '
+            '"endpoints_ready": true, "transfers_ready": true}'
+        )
+
+        self.assertEqual(
+            mochad.sent_lines,
+            ["rf A1 on", "rf A2 off"],
+        )
+
+    def test_chime_repeated_on_commands_each_reach_mochad(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(
+                devices={
+                    "A2": DeviceConfig(
+                        address="A2",
+                        name="Door Chime",
+                        entity_type=DeviceType.CHIME,
+                    )
+                }
+            ),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        for _ in range(2):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A2",
+                    payload="ON",
+                    topic="x10/A2/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, ["rf A2 on", "rf A2 on"])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(mqtt.attributes, [])
+        self.assertEqual(len(mqtt.events), 2)
+        self.assertEqual(mqtt.events[0][0], "A2")
+        self.assertFalse(mqtt.events[0][2])
+        self.assertEqual(
+            mqtt.events[0][1]["transmission"],
+            "unconfirmed",
+        )
+        self.assertFalse(mqtt.events[0][1]["confirmed"])
+
+    def test_chime_rejects_non_on_commands(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(
+                devices={
+                    "A2": DeviceConfig(
+                        address="A2",
+                        name="Door Chime",
+                        entity_type=DeviceType.CHIME,
+                    )
+                }
+            ),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        for payload in ("OFF", "DIM", "BRIGHT"):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A2",
+                    payload=payload,
+                    topic="x10/A2/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(mqtt.events, [])
+
+    def test_chime_mochad_echo_does_not_publish_state(self):
+        mqtt = FakeMqttClient()
+        bridge = Bridge(
+            minimal_config(
+                devices={
+                    "A2": DeviceConfig(
+                        address="A2",
+                        name="Door Chime",
+                        entity_type=DeviceType.CHIME,
+                    )
+                }
+            ),
+            mqtt_client=mqtt,
+            mochad_client=FakeMochadClient(),
+        )
+
+        bridge._on_mochad_line(
+            "07/10 15:28:31 Tx RF HouseUnit: A2 Func: On"
+        )
+
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(len(mqtt.events), 1)
+        self.assertEqual(mqtt.events[0][0], "A2")
+
+    def test_invalid_address_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A17",
+                payload="ON",
+                topic="x10/A17/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
+    def test_invalid_payload_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge._on_mqtt_command(
+            MqttCommandMessage(
+                device="A1",
+                payload="not-a-command",
+                topic="x10/A1/command",
+            )
+        )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
+    def test_encode_failure_does_not_mutate_state_or_send_command(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        with patch("bridge.encode_rf_command", side_effect=ValueError("bad")):
+            bridge._on_mqtt_command(
+                MqttCommandMessage(
+                    device="A1",
+                    payload="ON",
+                    topic="x10/A1/command",
+                )
+            )
+
+        self.assertEqual(mochad.sent_lines, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertEqual(bridge.state.snapshot(), {})
+
+
+class BridgeShutdownTests(unittest.TestCase):
+    def test_stop_publishes_retained_shutdown_status_before_disconnect(self):
+        mqtt = FakeMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge.stop()
+
+        self.assertTrue(mochad.stopped)
+        self.assertTrue(mqtt.disconnected)
+        self.assertEqual(len(mqtt.status_payloads), 1)
+        status_payload, status_retain, status_qos, status_wait = (
+            mqtt.status_payloads[0]
+        )
+        self.assertEqual(status_payload["status"], "shutdown")
+        self.assertFalse(status_payload["available"])
+        self.assertTrue(status_payload["mqtt_connected"])
+        self.assertFalse(status_payload["mochad_connected"])
+        self.assertTrue(status_retain)
+        self.assertEqual(status_qos, 1)
+        self.assertTrue(status_wait)
+        self.assertEqual(
+            mqtt.availability,
+            [(False, True, 1, True)],
+        )
+
+    def test_intentional_mqtt_disconnect_does_not_publish_after_disconnect(self):
+        mqtt = FakeMqttClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=FakeMochadClient(),
+        )
+        bridge._stopping = True
+        mqtt.connected = False
+
+        bridge._on_mqtt_disconnected(reason_code=0)
+
+        self.assertEqual(mqtt.status_payloads, [])
+        self.assertEqual(mqtt.availability, [])
+
+
+class BridgeDegradedModeTests(unittest.TestCase):
+    def test_drops_mqtt_publish_actions_while_disconnected(self):
+        mqtt = FakeMqttClient()
+        mqtt.connected = False
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=FakeMochadClient(),
+        )
+
+        bridge._on_mochad_line(
+            "07/10 15:28:31 Tx RF HouseUnit: A1 Func: On"
+        )
+
+        self.assertEqual(mqtt.events, [])
+        self.assertEqual(mqtt.states, [])
+        self.assertGreaterEqual(
+            bridge._bridge_status_payload()["dropped_mqtt_publishes"],
+            1,
+        )
+
+    def test_start_continues_when_transports_are_degraded(self):
+        class FailingMqttClient(FakeMqttClient):
+            connected = False
+
+            def connect(self):
+                self.connected = False
+
+        mqtt = FailingMqttClient()
+        mochad = FakeMochadClient()
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=mqtt,
+            mochad_client=mochad,
+        )
+
+        bridge.start()
+
+        self.assertTrue(bridge._running)
+        self.assertTrue(mochad.connected)
+        self.assertFalse(mqtt.connected)
+
 
 if __name__ == "__main__":
     unittest.main()

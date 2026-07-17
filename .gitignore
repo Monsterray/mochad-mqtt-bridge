@@ -14,3 +14,9 @@ build/
 .DS_Store
 *.log
 docker-compose.override.yml
+secrets/
+*.pem
+*.key
+*.crt
+!*example*.crt
+!*sample*.crt

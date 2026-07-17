@@ -210,7 +210,7 @@ class Topics:
                 f"Invalid command topic '{topic}'."
             )
 
-        return parts[1]
+        return Topics._address(parts[1])
 
     @staticmethod
     def parse_bridge_command_topic(
@@ -246,6 +246,9 @@ class Topics:
 
         if device.entity_type == DeviceType.SWITCH:
             return "switch"
+
+        if device.entity_type == DeviceType.CHIME:
+            return "button"
 
         raise TopicError(
             f"Unsupported Home Assistant entity type {device.entity_type}."

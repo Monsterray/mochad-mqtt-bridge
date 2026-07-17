@@ -130,6 +130,32 @@ HOUSE_STATUS_RE = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
+STRICT_HOUSE_STATUS_RE = re.compile(
+    rf"""
+    ^
+    {TIMESTAMP}
+    \s+
+    House
+    \s+
+    (?P<house>[A-P])
+    :
+    \s+
+    (?P<devices>
+        (?:[1-9]|1[0-6])
+        \s*=\s*
+        [01]
+        (?:
+            \s*,\s*
+            (?:[1-9]|1[0-6])
+            \s*=\s*
+            [01]
+        )*
+    )
+    $
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
 ###############################################################################
 # Security
 ###############################################################################

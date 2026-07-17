@@ -5,6 +5,40 @@ from models import DeviceConfig, DeviceType, MochadDiagnostics
 
 
 class DiscoveryButtonTests(unittest.TestCase):
+    def test_chime_device_discovers_as_button(self):
+        message = DiscoveryManager(
+            discovery_prefix="homeassistant",
+            base_topic="x10",
+        ).discovery_messages(
+            DeviceConfig(
+                address="A2",
+                name="Door Chime",
+                entity_type=DeviceType.CHIME,
+            )
+        )[0]
+
+        self.assertEqual(
+            message.topic,
+            "homeassistant/button/x10_A2/config",
+        )
+        self.assertEqual(message.payload["name"], "Door Chime")
+        self.assertEqual(message.payload["unique_id"], "x10_A2")
+        self.assertEqual(
+            message.payload["default_entity_id"],
+            "button.x10_a2",
+        )
+        self.assertEqual(
+            message.payload["command_topic"],
+            "x10/A2/command",
+        )
+        self.assertEqual(message.payload["payload_press"], "ON")
+        self.assertNotIn("state_topic", message.payload)
+        self.assertNotIn("payload_off", message.payload)
+        self.assertEqual(
+            message.payload["device"]["identifiers"],
+            ["mqtt_mochad_bridge"],
+        )
+
     def test_safe_bridge_buttons_are_discovered_by_default(self):
         messages = DiscoveryManager(
             discovery_prefix="homeassistant",

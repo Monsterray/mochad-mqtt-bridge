@@ -5,6 +5,7 @@ PUID="${PUID:-911}"
 PGID="${PGID:-911}"
 TZ="${TZ:-UTC}"
 UMASK="${UMASK:-022}"
+ALLOW_ROOT="${ALLOW_ROOT:-false}"
 
 is_number() {
     case "$1" in
@@ -21,17 +22,13 @@ name_for_gid() {
     awk -F: -v gid="$1" '$3 == gid { print $1; exit }' /etc/group
 }
 
-name_for_uid() {
-    awk -F: -v uid="$1" '$3 == uid { print $1; exit }' /etc/passwd
-}
-
 if ! is_number "$PUID" || ! is_number "$PGID"; then
     echo "[STARTUP] PUID and PGID must be numeric" >&2
     exit 64
 fi
 
-if [ "$PUID" = "0" ] || [ "$PGID" = "0" ]; then
-    echo "[STARTUP] PUID and PGID must be non-root IDs" >&2
+if { [ "$PUID" = "0" ] || [ "$PGID" = "0" ]; } && [ "$ALLOW_ROOT" != "true" ]; then
+    echo "[STARTUP] PUID and PGID must be non-root IDs unless ALLOW_ROOT=true" >&2
     exit 64
 fi
 
@@ -48,21 +45,21 @@ if [ "$(id -u)" != "0" ]; then
     exec "$@"
 fi
 
+config_owner="$(stat -c '%u:%g' /config)"
+requested_owner="$PUID:$PGID"
+if [ "$config_owner" != "$requested_owner" ]; then
+    if ! chown -R "$requested_owner" /config; then
+        echo "[STARTUP] cannot prepare /config owner=${requested_owner}; pre-own the mounted volume or run the container with permission to change /config ownership" >&2
+        exit 73
+    fi
+fi
+
 group_name="$(name_for_gid "$PGID" || true)"
-if [ -z "$group_name" ]; then
-    group_name="appgroup"
-    addgroup -g "$PGID" "$group_name"
-fi
-
-user_name="$(name_for_uid "$PUID" || true)"
-if [ -z "$user_name" ]; then
-    user_name="appuser"
-    adduser -D -H -u "$PUID" -G "$group_name" "$user_name"
+if [ -n "$group_name" ]; then
+    drop_identity="$PUID:$group_name"
 else
-    addgroup "$user_name" "$group_name" >/dev/null 2>&1 || true
+    drop_identity="$PUID:$PGID"
 fi
-
-chown -R "$PUID:$PGID" /config
 
 echo "[STARTUP] prepared /config owner=${PUID}:${PGID} umask=${UMASK} tz=${TZ}"
-exec su-exec "$user_name" "$@"
+exec su-exec "$drop_identity" "$@"

@@ -1,0 +1,5 @@
+07/11 12:00:00 Device selected
+07/11 12:00:00 Device status
+07/11 12:00:01 House A: 1=1
+07/11 12:00:02 Rx RF HouseUnit: A2 Func: On
+07/11 12:00:03 End status

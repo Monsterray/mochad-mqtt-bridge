@@ -10,7 +10,7 @@ or environment variables.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from threading import RLock
 from typing import Iterable
 
@@ -25,6 +25,7 @@ from models import (
     LogUnknownEventAction,
     PublishAttributesAction,
     PublishAvailabilityAction,
+    PublishCommandEventAction,
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
@@ -70,6 +71,7 @@ class StateManager:
     ) -> None:
         self._lock = RLock()
         self._devices: dict[str, DeviceState] = {}
+        self._device_configs: dict[str, DeviceConfig] = {}
         self._statistics = BridgeStatistics()
         self._mqtt_connected = False
         self._mqtt_has_connected = False
@@ -86,6 +88,7 @@ class StateManager:
 
         for device in devices or ():
             if self._address_allowed(device.address):
+                self._device_configs[device.address.strip().upper()] = device
                 self._ensure_device(device.address)
 
     def apply(
@@ -131,6 +134,10 @@ class StateManager:
                 return []
 
             state = self._ensure_device(address)
+            device = self._device_config(state.address)
+            if command not in device.supported_commands:
+                return []
+
             state.pending_command = command
             self._statistics.commands_sent += 1
 
@@ -141,6 +148,28 @@ class StateManager:
                     command=command,
                 )
             )
+
+            if not device.stateful:
+                actions.append(
+                    PublishCommandEventAction(
+                        address=state.address,
+                        payload={
+                            "timestamp": self._now().isoformat(),
+                            "device": state.address,
+                            "command": command.name,
+                            "stateful": False,
+                            "transmission": "unconfirmed",
+                            "confirmed": False,
+                            "message": (
+                                "Command sent to mochad; physical device "
+                                "state is unconfirmed."
+                            ),
+                        },
+                        retain=False,
+                    )
+                )
+                return actions
+
             actions.append(
                 PublishAttributesAction(
                     address=state.address,
@@ -251,6 +280,7 @@ class StateManager:
         self._statistics.events_received += 1
 
         state = self._ensure_device(event.address)
+        device = self._device_config(state.address)
         state.available = True
         state.last_seen = event.timestamp
 
@@ -259,7 +289,7 @@ class StateManager:
             PublishEventAction(event=event)
         )
 
-        if event.command not in STATE_COMMANDS:
+        if not device.stateful or event.command not in STATE_COMMANDS:
             return actions
 
         actions.extend(
@@ -293,6 +323,16 @@ class StateManager:
         actions: list[BridgeAction] = []
 
         for state in self._devices_for_house(event.house):
+            device = self._device_config(state.address)
+            if not device.stateful:
+                continue
+
+            if not self._device_responds_to_house_command(
+                device,
+                event.command,
+            ):
+                continue
+
             state.available = True
             state.last_seen = event.timestamp
 
@@ -316,6 +356,22 @@ class StateManager:
 
         return actions
 
+    @staticmethod
+    def _device_responds_to_house_command(
+        device: DeviceConfig,
+        command: Command,
+    ) -> bool:
+        if command == Command.ALL_UNITS_OFF:
+            return device.all_units_off_response
+
+        if command == Command.ALL_LIGHTS_OFF:
+            return device.all_lights_off_response
+
+        if command == Command.ALL_LIGHTS_ON:
+            return device.all_lights_on_response
+
+        return False
+
     def _apply_status_snapshot(
         self,
         snapshot: StatusSnapshot,
@@ -330,6 +386,10 @@ class StateManager:
                 continue
 
             state = self._ensure_device(address)
+            device = self._device_config(state.address)
+            if not device.stateful:
+                continue
+
             state.available = True
             state.last_seen = now
 
@@ -401,6 +461,16 @@ class StateManager:
             state = DeviceState(address=address)
             self._devices[address] = state
             return state
+
+    def _device_config(self, address: str) -> DeviceConfig:
+        address = address.strip().upper()
+        try:
+            return self._device_configs[address]
+        except KeyError:
+            return DeviceConfig(
+                address=address,
+                name=address,
+            )
 
     def _address_allowed(
         self,
@@ -483,4 +553,4 @@ class StateManager:
 
     @staticmethod
     def _now() -> datetime:
-        return datetime.now(UTC)
+        return datetime.now(timezone.utc)

@@ -1,0 +1,30 @@
+name: Bridge MQTT Integration
+
+on:
+  push:
+    branches: [master, develop, "fix/**"]
+  pull_request:
+    branches: [master, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deterministic broker and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes mosquitto openssl
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run Mosquitto and fake mochad integration tests
+        env:
+          RUN_MQTT_TLS_INTEGRATION: "1"
+        run: python -m pytest tests/integration/test_bridge_mqtt_integration.py tests/integration/test_mqtt_tls_mosquitto.py -m "known_inputs or tls"

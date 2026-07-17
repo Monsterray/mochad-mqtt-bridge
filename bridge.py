@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
@@ -37,6 +38,7 @@ from models import (
     PublishAttributesAction,
     PublishAvailabilityAction,
     PublishBridgeResponseAction,
+    PublishCommandEventAction,
     PublishDiscoveryAction,
     PublishEventAction,
     PublishStateAction,
@@ -48,7 +50,9 @@ from models import (
 from mochad_client import MochadClient
 from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
 from protocol import ProtocolParser, encode_rf_command
+from protocol.validation import normalize_address
 from state import StateManager
+from topics import Topics
 
 
 _LOG = logging.getLogger(__name__)
@@ -72,6 +76,8 @@ REPEATABLE_COMMANDS = {
     Command.ON,
     Command.OFF,
 }
+
+MAX_QUEUED_DEVICE_COMMANDS = 100
 
 
 @dataclass(slots=True)
@@ -187,6 +193,10 @@ class Bridge:
             _LOG.info("Wire debug logging enabled")
 
         self._running = False
+        self._stopping = False
+        self._dropped_mqtt_publishes = 0
+        self._queued_device_commands: deque[SendDeviceCommandAction] = deque()
+        self._dropped_device_commands = 0
         self._health_file = Path(
             os.getenv("BRIDGE_HEALTH_FILE", DEFAULT_HEALTH_FILE)
         )
@@ -254,17 +264,44 @@ class Bridge:
         started = time.monotonic()
         _LOG.info("Stopping bridge transports")
         self._running = False
+        self._stopping = True
         self.clients.mochad.stop()
         _LOG.info(
             "mochad client stopped elapsed=%.3fs",
             time.monotonic() - started,
         )
+        self._publish_shutdown_status()
         self.clients.mqtt.disconnect()
         _LOG.info(
             "MQTT client stopped elapsed=%.3fs",
             time.monotonic() - started,
         )
         self._write_health("stopped")
+
+    def _publish_shutdown_status(self) -> None:
+        if not self.clients.mqtt.connected:
+            _LOG.info("Skipping MQTT shutdown status because MQTT is disconnected")
+            return
+
+        payload = self._bridge_status_payload(
+            status="shutdown",
+            mqtt_connected=True,
+            mochad_connected=False,
+        )
+        payload["available"] = False
+        _LOG.info("MQTT publish shutdown status")
+        self.clients.mqtt.publish_status(
+            payload,
+            retain=True,
+            qos=1,
+            wait=True,
+        )
+        self.clients.mqtt.publish_availability(
+            False,
+            retain=True,
+            qos=1,
+            wait=True,
+        )
 
     def run_forever(self) -> None:
         self.start()
@@ -308,6 +345,9 @@ class Bridge:
         self,
         action: BridgeAction,
     ) -> None:
+        if self._drop_mqtt_publish_if_disconnected(action):
+            return
+
         if isinstance(action, PublishStateAction):
             _LOG.info(
                 "MQTT publish state address=%s state=%s retain=%s",
@@ -336,8 +376,25 @@ class Bridge:
                     "transport": action.event.transport.name,
                     "device": action.event.address,
                     "command": action.event.command.name,
+                    # A CM19A/CM15A Tx line confirms bridge transmission,
+                    # not that the physical X10 device acted on it.
+                    "confirmed": action.event.direction.name != "TX",
                 },
                 retain=False,
+            )
+            return
+
+        if isinstance(action, PublishCommandEventAction):
+            _LOG.info(
+                "MQTT publish command event address=%s command=%s retain=%s",
+                action.address,
+                action.payload.get("command"),
+                action.retain,
+            )
+            self.clients.mqtt.publish_event(
+                action.address,
+                action.payload,
+                retain=action.retain,
             )
             return
 
@@ -422,6 +479,14 @@ class Bridge:
             return
 
         if isinstance(action, SendDeviceCommandAction):
+            queue_reason = self._device_command_queue_reason()
+            if queue_reason is not None:
+                self._queue_device_command(
+                    action,
+                    reason=queue_reason,
+                )
+                return
+
             self._send_device_command(action)
             return
 
@@ -439,6 +504,36 @@ class Bridge:
         raise TypeError(
             f"Unhandled bridge action {type(action).__name__}."
         )
+
+    def _drop_mqtt_publish_if_disconnected(
+        self,
+        action: BridgeAction,
+    ) -> bool:
+        if not isinstance(
+            action,
+            (
+                PublishAttributesAction,
+                PublishAvailabilityAction,
+                PublishBridgeResponseAction,
+                PublishCommandEventAction,
+                PublishDiscoveryAction,
+                PublishEventAction,
+                PublishStateAction,
+                PublishStatusAction,
+            ),
+        ):
+            return False
+
+        if self.clients.mqtt.connected:
+            return False
+
+        self._dropped_mqtt_publishes += 1
+        _LOG.warning(
+            "Dropping MQTT publish while broker is disconnected action=%s dropped=%d",
+            type(action).__name__,
+            self._dropped_mqtt_publishes,
+        )
+        return True
 
     def _send_device_command(
         self,
@@ -469,6 +564,91 @@ class Bridge:
             if attempt < repeats and delay_seconds > 0:
                 time.sleep(delay_seconds)
 
+    def _device_command_queue_reason(self) -> str | None:
+        if not self.clients.mochad.connected:
+            return "mochad disconnected"
+
+        diagnostics = self._mochad_diagnostics
+        if diagnostics.usb_connected is False:
+            return "mochad USB disconnected"
+
+        if diagnostics.endpoints_ready is False:
+            return "mochad USB endpoints not ready"
+
+        if diagnostics.transfers_ready is False:
+            return "mochad USB transfers not ready"
+
+        return None
+
+    def _queue_device_command(
+        self,
+        action: SendDeviceCommandAction,
+        reason: str,
+    ) -> None:
+        if len(self._queued_device_commands) >= MAX_QUEUED_DEVICE_COMMANDS:
+            dropped = self._queued_device_commands.popleft()
+            self._dropped_device_commands += 1
+            _LOG.warning(
+                "Dropping oldest queued device command address=%s command=%s dropped=%d",
+                dropped.address,
+                dropped.command.name,
+                self._dropped_device_commands,
+            )
+
+        self._queued_device_commands.append(action)
+        _LOG.warning(
+            "Queued device command until mochad USB is ready address=%s command=%s reason=%s queued=%d",
+            action.address,
+            action.command.name,
+            reason,
+            len(self._queued_device_commands),
+        )
+
+        if self.clients.mqtt.connected:
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
+
+    def _flush_queued_device_commands(self) -> None:
+        if not self._queued_device_commands:
+            return
+
+        queue_reason = self._device_command_queue_reason()
+        if queue_reason is not None:
+            _LOG.info(
+                "Device command queue still waiting reason=%s queued=%d",
+                queue_reason,
+                len(self._queued_device_commands),
+            )
+            return
+
+        _LOG.info(
+            "Flushing queued device commands queued=%d",
+            len(self._queued_device_commands),
+        )
+
+        while self._queued_device_commands:
+            action = self._queued_device_commands.popleft()
+            try:
+                self._send_device_command(action)
+            except (ConnectionError, OSError) as exc:
+                self._queued_device_commands.appendleft(action)
+                _LOG.warning(
+                    "Paused queued device command flush address=%s command=%s error=%s queued=%d",
+                    action.address,
+                    action.command.name,
+                    exc,
+                    len(self._queued_device_commands),
+                )
+                return
+
+        if self.clients.mqtt.connected:
+            self.clients.mqtt.publish_status(
+                self._bridge_status_payload(),
+                retain=True,
+            )
+
     def _wire_callbacks(self) -> None:
         _LOG.info("Wiring bridge callbacks")
         self.clients.mqtt.set_command_callback(self._on_mqtt_command)
@@ -498,6 +678,26 @@ class Bridge:
         self,
         message: MqttCommandMessage,
     ) -> None:
+        try:
+            topic_address = Topics.parse_command_topic(
+                message.topic,
+                base_topic=self.config.mqtt_base_topic,
+            )
+        except ValueError:
+            _LOG.warning(
+                "Ignoring MQTT command with invalid topic %s",
+                message.topic,
+            )
+            return
+
+        if topic_address != message.device:
+            _LOG.warning(
+                "Ignoring MQTT command with mismatched topic device=%s topic=%s",
+                message.device,
+                message.topic,
+            )
+            return
+
         _LOG.info(
             "MQTT command received device=%s payload=%s topic=%s",
             message.device,
@@ -519,9 +719,40 @@ class Bridge:
             )
             return
 
+        try:
+            address = normalize_address(message.device)
+        except ValueError:
+            _LOG.warning(
+                "Ignoring MQTT command with invalid X10 address device=%s topic=%s",
+                message.device,
+                message.topic,
+            )
+            return
+
+        device = self._device_config(address)
+        if command not in device.supported_commands:
+            _LOG.warning(
+                "Ignoring unsupported command device=%s type=%s command=%s",
+                device.address,
+                device.entity_type.name,
+                command.name,
+            )
+            return
+
+        try:
+            encode_rf_command(address, command)
+        except ValueError as exc:
+            _LOG.warning(
+                "Ignoring MQTT command that cannot be encoded device=%s command=%s error=%s",
+                address,
+                command.name,
+                exc,
+            )
+            return
+
         self.execute_actions(
             self.state.optimistic_update(
-                message.device,
+                address,
                 command,
             )
         )
@@ -690,6 +921,10 @@ class Bridge:
             "MQTT disconnected reason_code=%s",
             reason_code,
         )
+        if self._stopping:
+            _LOG.info("MQTT disconnected during bridge shutdown")
+            return
+
         self.execute_actions(self.state.mqtt_disconnected())
         self._write_health("starting")
 
@@ -915,10 +1150,22 @@ class Bridge:
         desired_topics = self._desired_discovery_topics()
 
         if not force and not self.config.discovery_cleanup:
-            saved = self._save_discovery_registry(desired_topics)
+            try:
+                previous_topics = self.discovery_registry.load()
+            except DiscoveryRegistryError as exc:
+                _LOG.warning(
+                    "Discovery registry load failed while cleanup disabled: %s",
+                    exc,
+                )
+                previous_topics = set()
+
+            saved = self._save_discovery_registry(
+                previous_topics | desired_topics
+            )
             _LOG.info(
-                "Discovery registry updated desired=%d cleanup_enabled=%s registry=%s",
+                "Discovery registry updated desired=%d tracked=%d cleanup_enabled=%s registry=%s",
                 len(desired_topics),
+                len(previous_topics | desired_topics),
                 self.config.discovery_cleanup,
                 self.config.discovery_registry_path,
             )
@@ -926,7 +1173,8 @@ class Bridge:
                 "success": saved,
                 "message": "Discovery registry updated.",
                 "desired": len(desired_topics),
-                "stale": 0,
+                "tracked": len(previous_topics | desired_topics),
+                "stale": len(previous_topics - desired_topics),
                 "cleanup_enabled": self.config.discovery_cleanup,
             }
 
@@ -1112,6 +1360,9 @@ class Bridge:
                     self._desired_discovery_topics()
                 )
 
+        if kind == "health":
+            self._flush_queued_device_commands()
+
         return True
 
     @staticmethod
@@ -1187,6 +1438,19 @@ class Bridge:
             ),
             "configured_devices": len(self.devices),
             "known_devices": len(snapshot),
+            "dropped_mqtt_publishes": getattr(
+                self,
+                "_dropped_mqtt_publishes",
+                0,
+            ),
+            "queued_device_commands": len(
+                getattr(self, "_queued_device_commands", ())
+            ),
+            "dropped_device_commands": getattr(
+                self,
+                "_dropped_device_commands",
+                0,
+            ),
             "mqtt": self._mqtt_status_payload(),
             "mochad": self._mochad_diagnostics_payload(),
         }

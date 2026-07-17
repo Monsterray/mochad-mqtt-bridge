@@ -1,0 +1,2 @@
+x10/A2/command|ON
+x10/A2/command|ON

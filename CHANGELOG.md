@@ -4,7 +4,12 @@ All notable changes to this project will be documented in this file.
 
 This project follows semantic versioning once releases begin.
 
-## [Unreleased]
+## [0.4.0] - 07/16/2026
+
+### Fixed
+
+- Docker builds now collect installed Alpine package evidence without attempting
+  to read removed APK repository cache indexes.
 
 ### Added
 
@@ -29,7 +34,3 @@ This project follows semantic versioning once releases begin.
 ### Known Gaps
 
 - Discovery cleanup for removed configured devices is planned future work.
-
-## [0.1.0] - Unreleased
-
-- First release candidate baseline.

@@ -1,0 +1,4 @@
+x10/A17/command
+x10/A1/command/extra
+x10//command
+x10/bridge/command

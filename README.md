@@ -1,7 +1,7 @@
 # MQTT Mochad Bridge
 
-![Status](https://img.shields.io/badge/status-integration%20testing-yellow)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Status](https://img.shields.io/badge/status-release%20candidate-yellow)
+![Version](https://img.shields.io/badge/version-0.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 MQTT Mochad Bridge connects a running `mochad` TCP service to MQTT so X10
@@ -12,9 +12,9 @@ does not pin `mochad`; the bridge connects to an external `mochad` TCP service.
 
 ## Status
 
-Integration testing is in progress.
+Version 0.4.0 is in release-candidate validation.
 
-Project version: `0.1.0`
+Project version: `0.4.0`
 
 Tested with:
 
@@ -55,24 +55,37 @@ default. Set `MQTT_DOCKER_NETWORK` if your broker is on a different network.
 ## Docker Image
 
 The compose file builds the image locally for development and first-run testing.
-When published images are enabled later, the intended image name is:
+Version tags publish multi-platform release images to:
 
 ```text
 ghcr.io/monsterray/mochad-mqtt-bridge
 ```
 
-To use a published image in the future, replace the compose `build:` block with
-an `image:` reference such as:
+To use a published image, replace the compose `build:` block with an `image:`
+reference such as:
 
 ```yaml
-image: ghcr.io/monsterray/mochad-mqtt-bridge:0.1.0
+image: ghcr.io/monsterray/mochad-mqtt-bridge:0.4.0
 ```
 
-No GitHub Container Registry publishing workflow is enabled yet.
+Pushing a matching `v*` tag publishes `linux/amd64` and `linux/arm64` images
+with SBOM and provenance attestations, then creates the GitHub Release. Manual
+workflow runs build without publishing.
 
-The container starts as root only long enough to prepare writable paths, then
-drops privileges before starting the bridge. Application files remain owned by
-`root:root`; only `/config` is owned by the runtime `PUID:PGID`.
+Release image inputs are tracked in `release/versions.env`. Release Docker
+builds use a digest-qualified Python base image and install dependencies from
+`requirements.release.txt` with `pip --require-hashes`. OCI labels are populated
+from Git metadata in CI so release images identify the exact source revision and
+Git commit timestamp.
+
+CI workflow and branch-protection setup is documented in
+[`docs/ci-branch-protection.md`](docs/ci-branch-protection.md).
+
+The container starts as root only long enough to prepare `/config`, then drops
+to the configured `PUID:PGID` before starting the bridge. Application files
+remain owned by `root:root`; only `/config` is made writable by the runtime
+identity. The bridge health check uses the bundled Python runtime, so the image
+does not need curl, wget, netcat, or other maintenance tools.
 
 ## Configuration
 
@@ -85,6 +98,7 @@ PUID
 PGID
 TZ
 UMASK
+ALLOW_ROOT
 MQTT_HOST
 MQTT_PORT
 MQTT_USERNAME
@@ -111,12 +125,16 @@ BRIDGE_DEBUG_WIRE
 ```
 
 The variables above match the bridge runtime configuration in `config.py`.
-`BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check.
+`BRIDGE_HEALTH_MAX_AGE_SECONDS` is used by the Docker health check. The check
+reports healthy while the bridge is starting or reconnecting; MQTT and mochad
+availability remain visible in the retained bridge status document.
 
 `PUID`, `PGID`, `TZ`, and `UMASK` control container runtime permissions. The
 defaults are `PUID=911`, `PGID=911`, `TZ=UTC`, and `UMASK=022`. If Compose
 `user:` is set, Docker bypasses this root initialization step; in that mode,
 pre-own mounted volumes and provide any required `group_add` values yourself.
+That mode is intended for externally managed deployments. The normal Compose
+path is to leave `user:` unset and use `PUID`, `PGID`, and `UMASK`.
 
 `MOCHAD_PORT` should point at the main mochad TCP listener. The default is
 `1099`, and the bridge expects newline-delimited mochad events and diagnostic
@@ -129,7 +147,7 @@ future legacy-compatibility requirement makes it necessary.
 Example devices:
 
 ```text
-X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch
+X10_DEVICES=A1:Living Room Lamp:light,A2:Coffee Maker:switch,A3:Door Chime:chime
 ```
 
 Optional command repeat settings can be appended per device:
@@ -143,6 +161,30 @@ field is the delay between repeats in milliseconds and defaults to `150`.
 Repeats are bridge-side reliability tuning only; Home Assistant discovery is
 unchanged. The bridge repeats only `ON` and `OFF` commands. `DIM` and `BRIGHT`
 remain single-shot so brightness does not move farther than requested.
+
+Action-only devices, such as an SC546A chime, can use the `chime` type:
+
+```text
+X10_DEVICES=A3:Door Chime:chime
+```
+
+Chimes are discovered in Home Assistant as buttons. Pressing the button
+publishes `ON` to the normal per-address command topic, for example
+`x10/A3/command`. Chimes are not stateful: the bridge does not publish retained
+state for them, does not optimistically report them as `ON`, and emits only a
+non-retained event noting that the physical transmission is unconfirmed.
+
+Specific X10 device behavior can also be selected with a capability profile:
+
+```text
+X10_DEVICES=A1:Porch Socket:lm15a_socket_rocket,A3:Door Chime:sc546a_chime
+```
+
+Profiles keep product-specific behavior in the bridge, not in mochad-redux.
+They describe statefulness, supported commands, repeatable actions, house-wide
+command responses, learned addressing, secondary channels, and momentary versus
+continuous operation. See
+[`docs/capability-device-registry.md`](docs/capability-device-registry.md).
 
 Friendly names are enabled by default and are used only for Home Assistant
 display names. Set `X10_USE_FRIENDLY_NAMES=false` to make discovered entity
@@ -173,6 +215,11 @@ Example `bridge.json`:
       "address": "A2",
       "name": "Coffee Maker",
       "type": "switch"
+    },
+    {
+      "address": "A3",
+      "name": "Door Chime",
+      "type": "chime"
     }
   ]
 }
@@ -219,6 +266,18 @@ MQTT_TLS_KEY_PASSWORD_FILE=/run/secrets/mqtt_client_key_password
 `MQTT_PASSWORD_FILE` and `MQTT_TLS_KEY_PASSWORD_FILE` support Docker-secret
 style files. Do not set both `MQTT_PASSWORD` and `MQTT_PASSWORD_FILE`, or both
 `MQTT_TLS_KEY_PASSWORD` and `MQTT_TLS_KEY_PASSWORD_FILE`.
+
+An example Compose overlay is provided in `docker-compose.secrets.yml`. It
+declares top-level Compose secrets, mounts them under `/run/secrets`, and wires
+them into the existing `*_FILE` environment variables:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+Real secret files should live under a local `secrets/` directory. That
+directory is ignored by Git and secrets are never copied into `/config` by the
+bridge.
 
 The bridge does not support insecure hostname verification and does not
 automatically fall back to plaintext. If any TLS file or private-key password

@@ -5,7 +5,7 @@ Parser orchestration for the mochad protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from models import (
     DeviceEvent,
@@ -49,13 +49,13 @@ class ProtocolParser:
         if not line:
             return None
 
-        snapshot = self.status.feed(line)
+        if self.status.is_status_line(line):
+            snapshot = self.status.feed(line)
 
-        if snapshot is not None:
-            self.capabilities.status = True
-            return snapshot
+            if snapshot is not None:
+                self.capabilities.status = True
+                return snapshot
 
-        if self.status.active:
             return None
 
         match = DEVICE_EVENT_RE.match(line)
@@ -67,7 +67,7 @@ class ProtocolParser:
             self._record_transport(transport)
 
             return DeviceEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
                 direction=DIRECTION_MAP[
                     normalize_token(match.group("direction"))
                 ],
@@ -88,7 +88,7 @@ class ProtocolParser:
             self._record_transport(transport)
 
             return HouseEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
                 direction=DIRECTION_MAP[
                     normalize_token(match.group("direction"))
                 ],
@@ -101,7 +101,7 @@ class ProtocolParser:
             )
 
         return UnknownEvent(
-            timestamp=datetime.now(UTC),
+            timestamp=datetime.now(timezone.utc),
             raw=line,
         )
 
