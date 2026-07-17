@@ -1,4 +1,4 @@
-name: Bridge Container CI
+name: CI Container
 
 on:
   push:

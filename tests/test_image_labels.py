@@ -86,7 +86,7 @@ class ReleaseImageInputTests(unittest.TestCase):
         self.assertNotIn("apk info -vv", dockerfile)
 
     def test_release_workflow_publishes_tagged_images_and_release(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release-image.yml").read_text()
+        workflow = (ROOT / ".github" / "workflows" / "ci-release.yml").read_text()
 
         self.assertIn("packages: write", workflow)
         self.assertIn("docker/login-action@v4", workflow)

@@ -1,4 +1,4 @@
-name: Bridge MQTT Integration
+name: CI Integration
 
 on:
   push:
@@ -24,7 +24,12 @@ jobs:
           sudo apt-get install --yes mosquitto openssl
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Run Mosquitto and fake mochad integration tests
+      - name: Run canonical broker, protocol, and lifecycle integration tests
         env:
           RUN_MQTT_TLS_INTEGRATION: "1"
-        run: python -m pytest tests/integration/test_bridge_mqtt_integration.py tests/integration/test_mqtt_tls_mosquitto.py -m "known_inputs or tls"
+        run: |
+          python -m pytest \
+            tests/integration/test_bridge_mqtt_integration.py \
+            tests/integration/test_mqtt_tls_mosquitto.py \
+            tests/test_lifecycle.py \
+            -m "known_inputs or tls or lifecycle"
