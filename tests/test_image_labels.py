@@ -44,11 +44,12 @@ class ImageLabelValidationTests(unittest.TestCase):
 
 class ReleaseImageInputTests(unittest.TestCase):
     def test_versions_file_pins_digest_qualified_base_image(self) -> None:
+        version = (ROOT / "VERSION").read_text().strip()
         versions = (ROOT / "release" / "versions.env").read_text()
 
         self.assertIn("PYTHON_BASE_IMAGE=python:3.12-alpine@sha256:", versions)
         self.assertIn("IMAGE_NAME=ghcr.io/monsterray/mochad-mqtt-bridge", versions)
-        self.assertIn("IMAGE_VERSION=0.4.0", versions)
+        self.assertIn(f"IMAGE_VERSION={version}", versions)
 
     def test_release_requirements_are_hash_checked(self) -> None:
         requirements = (ROOT / "requirements.release.txt").read_text()
@@ -68,6 +69,15 @@ class ReleaseImageInputTests(unittest.TestCase):
         )
         self.assertIn('LABEL org.opencontainers.image.created="${IMAGE_CREATED}"', dockerfile)
         self.assertIn('LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"', dockerfile)
+        self.assertIn("ARG IMAGE_VERSION", dockerfile)
+
+    def test_runtime_version_contract_is_present(self) -> None:
+        version = (ROOT / "VERSION").read_text().strip()
+
+        self.assertIn(f'BRIDGE_VERSION = "{version}"', (ROOT / "version.py").read_text())
+        self.assertIn('"bridge": {', (ROOT / "bridge.py").read_text())
+        self.assertIn('"version": BRIDGE_VERSION', (ROOT / "bridge.py").read_text())
+        self.assertTrue((ROOT / "scripts" / "validate" / "version-consistency.sh").is_file())
 
     def test_dockerfile_collects_apk_evidence_without_repository_cache_access(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text()

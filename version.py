@@ -1,7 +1,8 @@
 """
 version.py
 
-Bridge version information.
+Generated bridge version information. Regenerate with
+scripts/release/sync-version-files.sh.
 """
 
 BRIDGE_NAME = "mqtt-mochad-bridge"
