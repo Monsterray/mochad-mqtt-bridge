@@ -83,6 +83,7 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           heading="$(awk -v prefix="## [$version] - " '
@@ -110,8 +111,17 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "GitHub Release $GITHUB_REF_NAME already exists"
           else
-            gh release create "$GITHUB_REF_NAME" \
-              --verify-tag \
-              --title "$GITHUB_REF_NAME" \
-              --notes-file /tmp/release-notes.md
+            if ! gh release create "$GITHUB_REF_NAME" \
+                --verify-tag \
+                --title "$GITHUB_REF_NAME" \
+                --notes-file /tmp/release-notes.md 2>/tmp/release-create.err; then
+              # A concurrent release job may have created this tag after the
+              # initial lookup. Confirm that case instead of failing on 422.
+              if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+                echo "GitHub Release $GITHUB_REF_NAME was created concurrently"
+              else
+                cat /tmp/release-create.err >&2
+                exit 1
+              fi
+            fi
           fi

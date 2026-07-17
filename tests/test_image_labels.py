@@ -84,6 +84,8 @@ class ReleaseImageInputTests(unittest.TestCase):
         self.assertIn("push: ${{ github.ref_type == 'tag' }}", workflow)
         self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/master', workflow)
         self.assertIn("must date the $version release as YYYY-MM-DD", workflow)
+        self.assertIn("GH_REPO: ${{ github.repository }}", workflow)
+        self.assertIn("/tmp/release-create.err", workflow)
         self.assertIn('gh release create "$GITHUB_REF_NAME"', workflow)
         self.assertIn("--notes-file /tmp/release-notes.md", workflow)
 
