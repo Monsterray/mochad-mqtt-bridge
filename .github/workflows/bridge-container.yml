@@ -44,10 +44,10 @@ jobs:
             IMAGE_SOURCE=${{ steps.metadata.outputs.source }}
       - name: Validate Compose files
         run: |
-          docker compose config
+          IMAGE_VERSION="$(cat VERSION)" docker compose config
           mkdir -p secrets
           touch secrets/mqtt_password.txt secrets/mqtt_ca.crt secrets/mqtt_client.crt secrets/mqtt_client.key secrets/mqtt_client_key_password.txt
-          docker compose -f docker-compose.yml -f docker-compose.secrets.yml config
+          IMAGE_VERSION="$(cat VERSION)" docker compose -f docker-compose.yml -f docker-compose.secrets.yml config
       - name: Validate labels and runtime permissions
         run: |
           python -m pip install -r requirements.txt

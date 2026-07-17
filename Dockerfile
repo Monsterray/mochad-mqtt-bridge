@@ -3,7 +3,7 @@ FROM ${PYTHON_BASE_IMAGE}
 
 ARG IMAGE_CREATED
 ARG IMAGE_REVISION
-ARG IMAGE_VERSION=0.4.0
+ARG IMAGE_VERSION
 ARG IMAGE_SOURCE=https://github.com/Monsterray/mochad-mqtt-bridge
 
 LABEL org.opencontainers.image.title="mochad-mqtt-bridge"

@@ -8,19 +8,26 @@ in bridge.py and the lower-level components.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 
 from bridge import Bridge
 from config import configure_logging, load_config
+from version import BRIDGE_NAME, BRIDGE_VERSION
 
 
 _LOG = logging.getLogger(__name__)
 
 
 def main() -> None:
+    if "--version" in sys.argv[1:]:
+        print(BRIDGE_VERSION)
+        return
+
     started = time.monotonic()
     config = load_config()
     configure_logging(config)
+    _LOG.info("Starting %s version=%s", BRIDGE_NAME, BRIDGE_VERSION)
     _LOG.info("Configuration loaded elapsed=%.3fs", time.monotonic() - started)
     _LOG.info(
         "MQTT username configured=%s",

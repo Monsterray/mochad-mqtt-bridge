@@ -14,7 +14,16 @@ does not pin `mochad`; the bridge connects to an external `mochad` TCP service.
 
 Version 0.4.0 is in release-candidate validation.
 
-Project version: `0.4.0`
+The project version is maintained in [VERSION](VERSION). Release image inputs
+are tracked separately in [release/versions.env](release/versions.env).
+
+## Versioning
+
+Files use plain semantic versions such as `0.5.0`, `0.5.0-dev`, and `0.5.0-rc1`;
+Git tags add a leading `v`. `scripts/release/prepare-release.sh` and
+`scripts/release/prepare-next-dev.sh` prepare reviewable local changes only.
+They never commit, tag, push, publish, or create a GitHub release. See
+[compatibility](docs/compatibility.md) for the bridge release mapping.
 
 Tested with:
 

@@ -53,6 +53,7 @@ from protocol import ProtocolParser, encode_rf_command
 from protocol.validation import normalize_address
 from state import StateManager
 from topics import Topics
+from version import BRIDGE_NAME, BRIDGE_VERSION
 
 
 _LOG = logging.getLogger(__name__)
@@ -1424,6 +1425,10 @@ class Bridge:
         status = status or ("online" if self.state.available else "offline")
 
         return {
+            "bridge": {
+                "name": BRIDGE_NAME,
+                "version": BRIDGE_VERSION,
+            },
             "status": status,
             "available": self.state.available,
             "mqtt_connected": (

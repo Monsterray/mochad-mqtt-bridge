@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        IMAGE_VERSION: ${IMAGE_VERSION:?set IMAGE_VERSION or use --env-file release/versions.env}
     image: x10-mochad-mqtt-bridge:local
     container_name: mochad-mqtt-bridge
     restart: unless-stopped

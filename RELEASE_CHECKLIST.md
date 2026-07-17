@@ -4,8 +4,8 @@ Use this checklist before publishing a GitHub release or Docker image.
 
 ## Version
 
-- [ ] Update `version.py`.
-- [ ] Update `release/versions.env` and the Docker `IMAGE_VERSION` default.
+- [ ] Update `VERSION`, then run `scripts/release/sync-version-files.sh`.
+- [ ] Confirm `release/versions.env` matches `VERSION`.
 - [ ] Update README version badge.
 - [ ] Replace the `CHANGELOG.md` version section's `Unreleased` marker with the
   actual release date in `YYYY-MM-DD` form.
@@ -15,6 +15,7 @@ Use this checklist before publishing a GitHub release or Docker image.
 ## Verification
 
 - [ ] Run Python compile check.
+- [ ] Run `scripts/validate/version-consistency.sh`.
 - [ ] Run available unit tests.
 - [ ] Run `docker compose config`.
 - [ ] Run `docker compose -f docker-compose.yml -f docker-compose.secrets.yml config`.

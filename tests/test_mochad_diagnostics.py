@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from bridge import Bridge
 from config import MqttTlsConfig
 from models import MochadDiagnostics
+from version import BRIDGE_NAME, BRIDGE_VERSION
 
 
 class FakeMochadClient:
@@ -126,6 +127,11 @@ class MochadDiagnosticTests(unittest.TestCase):
         bridge._mochad_diagnostics = MochadDiagnostics()
 
         payload = bridge._bridge_status_payload()
+
+        self.assertEqual(
+            payload["bridge"],
+            {"name": BRIDGE_NAME, "version": BRIDGE_VERSION},
+        )
 
         self.assertEqual(
             payload["mqtt"]["tls"],
