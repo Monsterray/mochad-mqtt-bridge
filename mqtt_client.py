@@ -243,8 +243,14 @@ class MqttClient:
         self._client.loop_start()
 
     def disconnect(self) -> None:
-        self._client.disconnect()
-        self._client.loop_stop()
+        try:
+            self._client.disconnect()
+        finally:
+            # Failed TLS handshakes can leave Paho disconnected before this
+            # method runs. The loop still owns its socket/thread resources and
+            # must be stopped even when disconnect() reports that state.
+            self._client.loop_stop()
+            self._connected = False
 
     def subscribe_commands(self) -> None:
         # The device command wildcard also receives x10/bridge/command.

@@ -57,21 +57,25 @@ def _mosquitto(tmp_path: Path, port: int):
             )
         )
     )
-    process = subprocess.Popen(
-        ["mosquitto", "-c", str(config)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        _wait_for_port(port)
-        yield
-    finally:
-        process.terminate()
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            process.wait(timeout=3)
-        if process.poll() is None:
-            process.kill()
+    log_path = tmp_path / "mosquitto.log"
+    with log_path.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            ["mosquitto", "-c", str(config)],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            _wait_for_port(port)
+            yield
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=3)
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=3)
 
 
 @pytest.mark.integration

@@ -139,41 +139,43 @@ def _mosquitto(
     config_path: Path,
     port: int,
 ):
-    process = subprocess.Popen(
-        [
-            "mosquitto",
-            "-c",
-            str(config_path),
-            "-v",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    log_path = config_path.with_suffix(".log")
+    with log_path.open("w+", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            [
+                "mosquitto",
+                "-c",
+                str(config_path),
+                "-v",
+            ],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
-    try:
-        _wait_for_port(port, process)
-        yield process
-    finally:
-        process.terminate()
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            process.communicate(timeout=5)
-        if process.poll() is None:
-            process.kill()
-            process.communicate(timeout=5)
+        try:
+            _wait_for_port(port, process, log_path)
+            yield process
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=5)
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
 
 
 def _wait_for_port(
     port: int,
     process: subprocess.Popen,
+    log_path: Path,
 ) -> None:
     deadline = time.time() + 8
 
     while time.time() < deadline:
         if process.poll() is not None:
-            output = ""
-            if process.stdout is not None:
-                output = process.stdout.read()
+            output = log_path.read_text(encoding="utf-8")
             raise AssertionError(
                 f"mosquitto exited before listening: {output}"
             )
@@ -235,6 +237,11 @@ def _generate_test_certs(
     client_csr = directory / "client.csr"
     client_crt = directory / "client.crt"
 
+    ca_config = directory / "ca.cnf"
+    ca_config.write_text(
+        _certificate_authority_config(),
+        encoding="utf-8",
+    )
     _openssl(
         "req",
         "-x509",
@@ -249,6 +256,10 @@ def _generate_test_certs(
         ca_key,
         "-out",
         ca_crt,
+        "-config",
+        ca_config,
+        "-extensions",
+        "v3_ca",
     )
 
     _certificate_request(
@@ -397,15 +408,39 @@ def _openssl_extension_config(
     san: str,
     client_auth: bool,
 ) -> str:
-    lines = ["[v3_req]"]
+    lines = [
+        "[v3_req]",
+        "basicConstraints = critical,CA:false",
+        "keyUsage = critical,digitalSignature,keyEncipherment",
+    ]
 
     if san:
         lines.append(f"subjectAltName = {san}")
 
-    if client_auth:
-        lines.append("extendedKeyUsage = clientAuth")
+    lines.append(
+        "extendedKeyUsage = clientAuth"
+        if client_auth
+        else "extendedKeyUsage = serverAuth"
+    )
 
     return "\n".join(lines) + "\n"
+
+
+def _certificate_authority_config() -> str:
+    return "\n".join(
+        (
+            "[req]",
+            "prompt = no",
+            "distinguished_name = dn",
+            "x509_extensions = v3_ca",
+            "[dn]",
+            "CN = mqtt-tls-test-ca",
+            "[v3_ca]",
+            "basicConstraints = critical,CA:true",
+            "keyUsage = critical,keyCertSign,cRLSign",
+            "subjectKeyIdentifier = hash",
+        )
+    ) + "\n"
 
 
 def _openssl(

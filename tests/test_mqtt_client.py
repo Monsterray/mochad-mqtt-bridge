@@ -87,6 +87,15 @@ class FailingFakePahoClient(FakePahoClient):
         self.calls.append("loop_start")
 
 
+class DisconnectFailingFakePahoClient(FakePahoClient):
+    def disconnect(self):
+        self.calls.append("disconnect")
+        raise RuntimeError("not connected")
+
+    def loop_stop(self):
+        self.calls.append("loop_stop")
+
+
 class MqttClientRoutingTests(unittest.TestCase):
     def test_device_command_topic_routes_to_device_callback(self):
         fake = FakePahoClient()
@@ -267,6 +276,20 @@ class MqttClientRoutingTests(unittest.TestCase):
         client.connect()
 
         self.assertEqual(fake.calls, ["connect", "loop_start"])
+        self.assertFalse(client.connected)
+
+    def test_disconnect_stops_loop_after_disconnect_error(self):
+        fake = DisconnectFailingFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+        client._connected = True
+
+        with self.assertRaisesRegex(RuntimeError, "not connected"):
+            client.disconnect()
+
+        self.assertEqual(fake.calls, ["disconnect", "loop_stop"])
         self.assertFalse(client.connected)
 
     def test_later_broker_appearance_restores_subscription_and_callback(self):
