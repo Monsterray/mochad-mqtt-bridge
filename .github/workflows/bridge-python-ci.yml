@@ -10,6 +10,18 @@ permissions:
   contents: read
 
 jobs:
+  shell:
+    name: Shell safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Validate tracked shell scripts
+        run: scripts/validate/shellcheck.sh
+
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
