@@ -22,6 +22,15 @@ python3 -m compileall -q .
 If you are working from a checkout that includes tests, run that checkout's
 unit test command before opening a pull request.
 
+Tracked shell scripts are checked with:
+
+```sh
+scripts/validate/shellcheck.sh
+```
+
+See [docs/static-analysis-audit.md](docs/static-analysis-audit.md) for the
+current shell-check policy and initial audit result.
+
 ## Pull Requests
 
 - Keep changes focused.
