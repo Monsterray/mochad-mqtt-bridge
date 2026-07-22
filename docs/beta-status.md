@@ -9,8 +9,9 @@ develop, master, or another moving branch.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Python compilation, shell safety, source-only pytest suite | PASS | 138 selected source-only tests passed in recorded validation. |
-| Docker runtime, Mosquitto, fake-mochad, reconnect, and Home Assistant discovery integration | NOT RUN | Requires the separate isolated Docker integration runner. |
+| Python compilation, version contract, and deterministic pytest suite | PASS | Pull-request CI runs the supported Python matrix; use the check attached to the tested SHA for the exact test count. |
+| Shell safety | PASS | Pull-request CI checks every tracked shell script at warning severity. |
+| Docker runtime, Mosquitto, fake-mochad, reconnect, and Home Assistant discovery integration | NOT RUN | Not established by source-only checks; consult the dedicated integration and container checks attached to the tested SHA. |
 | Physical CM19A/CM15A delivery and SC546A chime result | HARDWARE REQUIRED | A software transmission is not physical confirmation; human observation is required. |
 
 Do not use the bridge against a public MQTT broker or expose Home Assistant
