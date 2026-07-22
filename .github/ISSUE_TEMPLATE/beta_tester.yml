@@ -1,0 +1,83 @@
+name: Beta test report
+description: Report a reproducible beta installation, controller, module, Docker, MQTT, or Home Assistant result.
+title: "[beta]: "
+labels: ["beta-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a tagged beta release or exact full SHA. Do not include passwords,
+        tokens, private keys, complete environment files, public IP addresses,
+        unredacted Home Assistant configuration, or private device names.
+  - type: input
+    id: version
+    attributes:
+      label: Exact version, tag, or full SHA
+      placeholder: "v0.4.0-beta.1 or 40-character commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: os_architecture
+    attributes:
+      label: Operating system and CPU architecture
+      placeholder: "Ubuntu 24.04, x86_64"
+    validations:
+      required: true
+  - type: input
+    id: controller
+    attributes:
+      label: Controller and USB VID:PID
+      placeholder: "CM19A, 0bc7:0002"
+    validations:
+      required: true
+  - type: textarea
+    id: modules
+    attributes:
+      label: X10 modules and addresses tested
+      placeholder: "SC546A A3; test only, no production devices"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - Native Linux
+        - Docker Compose
+        - Docker image
+        - Source-only validation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Exact steps and expected result
+      description: "Include commands with credentials removed."
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Observed result and status
+      description: "Use PASS, FAIL, NOT RUN, NOT APPLICABLE, or HARDWARE REQUIRED."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: "Remove passwords, tokens, private keys, IP addresses, hostnames, and personal device names."
+    validations:
+      required: true
+  - type: dropdown
+    id: rollback
+    attributes:
+      label: Rollback result
+      options:
+        - PASS - rollback completed
+        - FAIL - rollback did not complete
+        - NOT RUN - rollback was not attempted
+        - NOT APPLICABLE
+    validations:
+      required: true

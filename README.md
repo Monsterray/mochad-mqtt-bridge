@@ -61,6 +61,17 @@ docker compose up --build
 The standalone compose file expects an external Docker network named `mqtt` by
 default. Set `MQTT_DOCKER_NETWORK` if your broker is on a different network.
 
+## Beta Testing
+
+Version 0.4.0 is a cautious public beta. Use a tagged beta image or exact full
+Git SHA, not develop or another moving branch. Pull-request CI separates fast
+source checks from MQTT, lifecycle, container, and multiarchitecture checks;
+consult the checks attached to the tested SHA for exact evidence. Physical
+module delivery is not implied by a successful software transmission.
+
+See [docs/beta-status.md](docs/beta-status.md) and file a Beta test report with
+sanitized logs and a rollback result.
+
 ## Docker Image
 
 The compose file builds the image locally for development and first-run testing.
