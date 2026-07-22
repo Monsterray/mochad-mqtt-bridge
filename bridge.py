@@ -27,6 +27,7 @@ from config import (
 )
 from discovery import DiscoveryManager
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
+from device_registry import configured_profile_diagnostics
 from models import (
     BridgeAction,
     BridgeCommand,
@@ -1025,6 +1026,7 @@ class Bridge:
     ) -> None:
         old_devices = self.devices
         old_use_friendly_names = self.config.use_friendly_names
+        old_allow_experimental = self.config.allow_experimental_profiles
         new_devices = {
             address: device
             for address, device in new_config.devices.items()
@@ -1034,6 +1036,8 @@ class Bridge:
         if (
             new_devices == old_devices
             and new_config.use_friendly_names == old_use_friendly_names
+            and new_config.allow_experimental_profiles
+            == old_allow_experimental
         ):
             _LOG.info("Config file reloaded with no runtime changes")
             return
@@ -1042,12 +1046,17 @@ class Bridge:
             self.config,
             devices=new_config.devices,
             use_friendly_names=new_config.use_friendly_names,
+            allow_experimental_profiles=(
+                new_config.allow_experimental_profiles
+            ),
         )
         self.devices = new_devices
         _LOG.info(
-            "Config file reloaded devices=%d friendly_names=%s",
+            "Config file reloaded devices=%d friendly_names=%s "
+            "allow_experimental_profiles=%s",
             len(self.devices),
             self.config.use_friendly_names,
+            self.config.allow_experimental_profiles,
         )
 
         if self.clients.mqtt.connected:
@@ -1458,6 +1467,16 @@ class Bridge:
             ),
             "mqtt": self._mqtt_status_payload(),
             "mochad": self._mochad_diagnostics_payload(),
+            "device_profiles": {
+                "allow_experimental": (
+                    getattr(
+                        self.config,
+                        "allow_experimental_profiles",
+                        False,
+                    )
+                ),
+                "configured": configured_profile_diagnostics(self.devices),
+            },
         }
 
     def _mqtt_status_payload(self) -> dict:
