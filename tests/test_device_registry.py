@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from config import ConfigError, create_config_file_if_missing, load_config
@@ -15,7 +16,6 @@ from device_registry import (
     ProfileRegistrationError,
     ProfileSelectionError,
     RESEARCH_PROFILE_IDS,
-    VerificationState,
     apply_profile,
     configured_profile_diagnostics,
     get_profile,
@@ -48,8 +48,8 @@ def _evidence(
                 title="Test manual",
             ),
         ),
-        fixture_verification=VerificationState.PASS,
-        hardware_verification=VerificationState.NOT_APPLICABLE,
+        fixture_verified=True,
+        hardware_verified=True,
         last_reviewed="2026-07-21",
         reviewed_by="Test maintainer",
         notes="Synthetic registry test profile.",
@@ -98,11 +98,167 @@ class DeviceProfileRegistrationTests(unittest.TestCase):
             stateful=True,
         )
 
+        cases = (
+            (replace(missing_metadata, evidence=_evidence()), "lifecycle"),
+            (
+                replace(
+                    missing_metadata,
+                    lifecycle=ProfileLifecycle.EXPERIMENTAL,
+                ),
+                "evidence",
+            ),
+        )
+
+        for profile, field in cases:
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"missing_metadata.*{field}",
+                ):
+                    DeviceProfileRegistry((profile,))
+
+    def test_invalid_lifecycle_values_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for value in ("experimental", " experimental ", "", 1, True):
+            with self.subTest(value=value):
+                invalid = replace(valid, lifecycle=value)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*lifecycle",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_invalid_confidence_values_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for value in ("confirmed", " confirmed ", "", 1, True):
+            with self.subTest(value=value):
+                invalid_evidence = replace(valid.evidence, confidence=value)
+                invalid = replace(valid, evidence=invalid_evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*evidence.confidence",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_verification_flags_require_actual_booleans(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for field in ("fixture_verified", "hardware_verified"):
+            for value in ("true", "false", 0, 1):
+                with self.subTest(field=field, value=value):
+                    invalid_evidence = replace(
+                        valid.evidence,
+                        **{field: value},
+                    )
+                    invalid = replace(valid, evidence=invalid_evidence)
+                    with self.assertRaisesRegex(
+                        ProfileRegistrationError,
+                        f"test_experimental.*evidence.{field}",
+                    ):
+                        DeviceProfileRegistry((invalid,))
+
+    def test_required_evidence_fields_are_rejected_when_missing(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+        invalid_values = (
+            ("sources", ()),
+            ("last_reviewed", ""),
+            ("last_reviewed", "2026-99-99"),
+            ("reviewed_by", ""),
+            ("notes", "   "),
+        )
+
+        for field, value in invalid_values:
+            with self.subTest(field=field):
+                invalid_evidence = replace(valid.evidence, **{field: value})
+                invalid = replace(valid, evidence=invalid_evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"test_experimental.*evidence.{field}",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_malformed_evidence_sources_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+        malformed_sources = (
+            [valid.evidence.sources[0]],
+            ({"reference": "https://example.invalid/manual.pdf"},),
+            (
+                EvidenceSource(
+                    reference=" https://example.invalid/manual.pdf",
+                    source_type="manufacturer_manual",
+                    title="Test manual",
+                ),
+            ),
+            (
+                EvidenceSource(
+                    reference="https://example.invalid/manual.pdf",
+                    source_type="manufacturer_manual",
+                    title="Test manual",
+                    sha256="not-a-sha256",
+                ),
+            ),
+        )
+
+        for sources in malformed_sources:
+            with self.subTest(sources=sources):
+                invalid = replace(
+                    valid,
+                    evidence=replace(valid.evidence, sources=sources),
+                )
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*evidence.sources",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_invalid_registration_does_not_mutate_registry(self):
+        valid = _named_profile(ProfileLifecycle.VERIFIED, _evidence())
+        registry = DeviceProfileRegistry((valid,))
+        registered_before = registry.registered_ids()
+        invalid = replace(
+            _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence()),
+            profile_id="invalid_profile",
+            lifecycle="experimental",
+        )
+
         with self.assertRaisesRegex(
             ProfileRegistrationError,
-            "requires lifecycle and evidence metadata",
+            "invalid_profile.*lifecycle",
         ):
-            DeviceProfileRegistry((missing_metadata,))
+            registry.register(invalid)
+
+        self.assertEqual(registry.registered_ids(), registered_before)
+        self.assertIs(registry.get(valid.profile_id), valid)
+
+    def test_verified_profile_policy_errors_identify_evidence_fields(self):
+        cases = (
+            (
+                replace(
+                    _evidence(),
+                    confidence=EvidenceConfidence.INFERRED,
+                ),
+                "evidence.confidence",
+            ),
+            (
+                replace(_evidence(), fixture_verified=False),
+                "evidence.fixture_verified",
+            ),
+            (
+                replace(_evidence(), hardware_verified=False),
+                "evidence.hardware_verified",
+            ),
+        )
+
+        for evidence, field in cases:
+            with self.subTest(field=field):
+                profile = _named_profile(ProfileLifecycle.VERIFIED, evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"test_verified.*{field}",
+                ):
+                    DeviceProfileRegistry((profile,))
 
     def test_research_profile_is_never_selectable(self):
         registry = DeviceProfileRegistry(
@@ -362,8 +518,8 @@ class Sc546aBehaviorTests(unittest.TestCase):
                     "profile_id": "sc546a_chime",
                     "lifecycle": "experimental",
                     "confidence": "well_supported",
-                    "fixture_verification": "pass",
-                    "hardware_verification": "hardware_required",
+                    "fixture_verified": True,
+                    "hardware_verified": False,
                     "last_reviewed": "2026-07-21",
                 }
             ],

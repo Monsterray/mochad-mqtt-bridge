@@ -47,3 +47,7 @@ Configured named-profile lifecycle, confidence, fixture verification, and
 hardware verification appear in the retained bridge status document. Evidence
 metadata does not change MQTT topics, unique IDs, discovery entity behavior, or
 state policy.
+
+The diagnostic fields `fixture_verified` and `hardware_verified` are booleans.
+`false` means the corresponding verification has not been completed; it does
+not mean the underlying device behavior was disproved.

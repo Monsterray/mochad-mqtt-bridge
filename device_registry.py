@@ -8,6 +8,7 @@ lifecycle and evidence metadata before registration.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from enum import Enum
 import logging
 import re
@@ -25,7 +26,7 @@ from models import (
 
 
 _LOG = logging.getLogger(__name__)
-_REVIEW_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ProfileLifecycle(str, Enum):
@@ -41,14 +42,6 @@ class EvidenceConfidence(str, Enum):
     COMMUNITY_REPORTED = "community_reported"
     INFERRED = "inferred"
     UNVERIFIED = "unverified"
-
-
-class VerificationState(str, Enum):
-    PASS = "pass"
-    FAIL = "fail"
-    NOT_RUN = "not_run"
-    NOT_APPLICABLE = "not_applicable"
-    HARDWARE_REQUIRED = "hardware_required"
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,8 +60,8 @@ class ProfileEvidence:
 
     confidence: EvidenceConfidence
     sources: tuple[EvidenceSource, ...]
-    fixture_verification: VerificationState
-    hardware_verification: VerificationState
+    fixture_verified: bool
+    hardware_verified: bool
     last_reviewed: str
     reviewed_by: str
     notes: str
@@ -76,8 +69,8 @@ class ProfileEvidence:
     def diagnostics(self) -> dict[str, object]:
         return {
             "confidence": self.confidence.value,
-            "fixture_verification": self.fixture_verification.value,
-            "hardware_verification": self.hardware_verification.value,
+            "fixture_verified": self.fixture_verified,
+            "hardware_verified": self.hardware_verified,
             "last_reviewed": self.last_reviewed,
         }
 
@@ -181,12 +174,11 @@ class DeviceProfileRegistry:
                 )
             _LOG.warning(
                 "Experimental device profile selected profile=%s "
-                "confidence=%s fixture_verification=%s "
-                "hardware_verification=%s",
+                "confidence=%s fixture_verified=%s hardware_verified=%s",
                 profile.profile_id,
                 profile.evidence.confidence.value,
-                profile.evidence.fixture_verification.value,
-                profile.evidence.hardware_verification.value,
+                profile.evidence.fixture_verified,
+                profile.evidence.hardware_verified,
             )
             return profile
 
@@ -217,53 +209,114 @@ class DeviceProfileRegistry:
 
     @staticmethod
     def _validate_registration(profile: DeviceProfile) -> None:
-        if not profile.profile_id.strip():
-            raise ProfileRegistrationError("Profile ID cannot be empty.")
-        if not profile.model.strip():
+        if not isinstance(profile, DeviceProfile):
             raise ProfileRegistrationError(
-                f"Profile '{profile.profile_id}' must include a model."
+                "Profile '<unknown>' field 'profile' must be a DeviceProfile."
             )
+
+        profile_id = _required_string(
+            profile.profile_id,
+            profile_id="<unknown>",
+            field="profile_id",
+        )
+        _required_string(profile.model, profile_id=profile_id, field="model")
+        _required_string(
+            profile.description,
+            profile_id=profile_id,
+            field="description",
+        )
 
         if profile.is_generic:
             if profile.lifecycle is not None or profile.evidence is not None:
                 raise ProfileRegistrationError(
-                    f"Generic profile '{profile.profile_id}' must not include "
-                    "named-profile lifecycle or evidence metadata."
+                    f"Profile '{profile_id}' fields 'lifecycle' and 'evidence' "
+                    "must be absent for a generic profile."
                 )
             return
 
-        if profile.lifecycle is None or profile.evidence is None:
+        if profile.lifecycle is None:
             raise ProfileRegistrationError(
-                f"Named profile '{profile.profile_id}' requires lifecycle and "
-                "evidence metadata."
+                f"Profile '{profile_id}' field 'lifecycle' is required for a "
+                "named profile."
+            )
+
+        if not isinstance(profile.lifecycle, ProfileLifecycle):
+            allowed = ", ".join(item.value for item in ProfileLifecycle)
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'lifecycle' must be a "
+                f"ProfileLifecycle value ({allowed}); got "
+                f"{profile.lifecycle!r}."
+            )
+
+        if profile.evidence is None:
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'evidence' is required for a "
+                "named profile."
+            )
+
+        if not isinstance(profile.evidence, ProfileEvidence):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'evidence' must be a "
+                "ProfileEvidence record."
             )
 
         evidence = profile.evidence
-        if not evidence.sources:
+        if not isinstance(evidence.confidence, EvidenceConfidence):
+            allowed = ", ".join(item.value for item in EvidenceConfidence)
             raise ProfileRegistrationError(
-                f"Named profile '{profile.profile_id}' requires at least one "
-                "evidence source."
+                f"Profile '{profile_id}' field 'evidence.confidence' must be "
+                f"an EvidenceConfidence value ({allowed}); got "
+                f"{evidence.confidence!r}."
             )
-        if not _REVIEW_DATE_RE.fullmatch(evidence.last_reviewed):
+
+        _validate_boolean(
+            evidence.fixture_verified,
+            profile_id=profile_id,
+            field="evidence.fixture_verified",
+        )
+        _validate_boolean(
+            evidence.hardware_verified,
+            profile_id=profile_id,
+            field="evidence.hardware_verified",
+        )
+
+        if not isinstance(evidence.sources, tuple) or not evidence.sources:
             raise ProfileRegistrationError(
-                f"Named profile '{profile.profile_id}' last_reviewed must use "
-                "YYYY-MM-DD."
+                f"Profile '{profile_id}' field 'evidence.sources' must be a "
+                "non-empty tuple of EvidenceSource records."
             )
-        if not evidence.reviewed_by.strip() or not evidence.notes.strip():
+
+        for index, source in enumerate(evidence.sources):
+            _validate_evidence_source(profile_id, index, source)
+
+        reviewed = _required_string(
+            evidence.last_reviewed,
+            profile_id=profile_id,
+            field="evidence.last_reviewed",
+        )
+        try:
+            parsed_reviewed = date.fromisoformat(reviewed)
+        except ValueError as exc:
             raise ProfileRegistrationError(
-                f"Named profile '{profile.profile_id}' requires reviewed_by "
-                "and notes."
+                f"Profile '{profile_id}' field 'evidence.last_reviewed' must "
+                f"be a valid YYYY-MM-DD date; got {reviewed!r}."
+            ) from exc
+        if parsed_reviewed.isoformat() != reviewed:
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'evidence.last_reviewed' must "
+                f"be canonical YYYY-MM-DD; got {reviewed!r}."
             )
-        for source in evidence.sources:
-            if not (
-                source.reference.strip()
-                and source.source_type.strip()
-                and source.title.strip()
-            ):
-                raise ProfileRegistrationError(
-                    f"Named profile '{profile.profile_id}' has incomplete "
-                    "evidence source metadata."
-                )
+
+        _required_string(
+            evidence.reviewed_by,
+            profile_id=profile_id,
+            field="evidence.reviewed_by",
+        )
+        _required_string(
+            evidence.notes,
+            profile_id=profile_id,
+            field="evidence.notes",
+        )
 
         if profile.lifecycle is ProfileLifecycle.VERIFIED:
             if evidence.confidence not in {
@@ -271,22 +324,80 @@ class DeviceProfileRegistry:
                 EvidenceConfidence.WELL_SUPPORTED,
             }:
                 raise ProfileRegistrationError(
-                    f"Verified profile '{profile.profile_id}' requires "
-                    "confirmed or well-supported confidence."
+                    f"Profile '{profile_id}' field 'evidence.confidence' must "
+                    "be confirmed or well_supported for a verified profile."
                 )
-            if evidence.fixture_verification is not VerificationState.PASS:
+            if not evidence.fixture_verified:
                 raise ProfileRegistrationError(
-                    f"Verified profile '{profile.profile_id}' requires "
-                    "passing deterministic fixtures."
+                    f"Profile '{profile_id}' field "
+                    "'evidence.fixture_verified' must be true for a verified "
+                    "profile."
                 )
-            if evidence.hardware_verification not in {
-                VerificationState.PASS,
-                VerificationState.NOT_APPLICABLE,
-            }:
+            if not evidence.hardware_verified:
                 raise ProfileRegistrationError(
-                    f"Verified profile '{profile.profile_id}' requires "
-                    "passing or not-applicable hardware verification."
+                    f"Profile '{profile_id}' field "
+                    "'evidence.hardware_verified' must be true for a verified "
+                    "profile."
                 )
+
+
+def _required_string(value: object, *, profile_id: str, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field '{field}' must be a non-empty "
+            "string."
+        )
+    if value != value.strip():
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field '{field}' must not contain leading "
+            "or trailing whitespace."
+        )
+    return value
+
+
+def _validate_boolean(value: object, *, profile_id: str, field: str) -> None:
+    if type(value) is not bool:
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field '{field}' must be an actual boolean "
+            f"true or false; got {value!r}."
+        )
+
+
+def _validate_evidence_source(
+    profile_id: str,
+    index: int,
+    source: object,
+) -> None:
+    field = f"evidence.sources[{index}]"
+    if not isinstance(source, EvidenceSource):
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field '{field}' must be an "
+            "EvidenceSource record."
+        )
+
+    _required_string(
+        source.reference,
+        profile_id=profile_id,
+        field=f"{field}.reference",
+    )
+    _required_string(
+        source.source_type,
+        profile_id=profile_id,
+        field=f"{field}.source_type",
+    )
+    _required_string(
+        source.title,
+        profile_id=profile_id,
+        field=f"{field}.title",
+    )
+    if source.sha256 is not None:
+        if not isinstance(source.sha256, str) or not _SHA256_RE.fullmatch(
+            source.sha256
+        ):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.sha256' must be a "
+                "64-character lowercase hexadecimal SHA-256 value."
+            )
 
 
 ON_OFF = frozenset({Command.ON, Command.OFF})
@@ -346,8 +457,8 @@ SC546A_CHIME = DeviceProfile(
                 ),
             ),
         ),
-        fixture_verification=VerificationState.PASS,
-        hardware_verification=VerificationState.HARDWARE_REQUIRED,
+        fixture_verified=True,
+        hardware_verified=False,
         last_reviewed="2026-07-21",
         reviewed_by="Mochad project maintainers",
         notes=(

@@ -28,6 +28,11 @@ state, hardware-verification state, last review information, and notes. The
 confidence vocabulary is `confirmed`, `well_supported`,
 `community_reported`, `inferred`, and `unverified`.
 
+`fixture_verified` and `hardware_verified` are strict booleans. Named profile
+registration rejects strings, integers, whitespace variants, unknown enum
+values, malformed sources, and invalid review dates before changing the
+registry.
+
 Named registration fails when lifecycle or required evidence metadata is
 missing. Rejected profiles are never replaced silently with generic profiles.
 

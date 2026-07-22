@@ -179,8 +179,8 @@ class MochadDiagnosticTests(unittest.TestCase):
                 "profile_id": "sc546a_chime",
                 "lifecycle": "experimental",
                 "confidence": "well_supported",
-                "fixture_verification": "pass",
-                "hardware_verification": "hardware_required",
+                "fixture_verified": True,
+                "hardware_verified": False,
                 "last_reviewed": "2026-07-21",
             },
         )
