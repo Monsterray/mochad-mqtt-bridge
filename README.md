@@ -126,6 +126,7 @@ BRIDGE_CONFIG_RELOAD_INTERVAL_SECONDS
 DISCOVERY_CLEANUP
 DISCOVERY_REGISTRY_PATH
 ENABLE_MAINTENANCE_BUTTONS
+ALLOW_EXPERIMENTAL_PROFILES
 X10_DEVICES
 X10_USE_FRIENDLY_NAMES
 X10_HOUSECODES
@@ -171,7 +172,8 @@ Repeats are bridge-side reliability tuning only; Home Assistant discovery is
 unchanged. The bridge repeats only `ON` and `OFF` commands. `DIM` and `BRIGHT`
 remain single-shot so brightness does not move farther than requested.
 
-Action-only devices, such as an SC546A chime, can use the `chime` type:
+User-declared action-only devices can use the generic `chime` type without
+making a named-model support claim:
 
 ```text
 X10_DEVICES=A3:Door Chime:chime
@@ -183,16 +185,18 @@ publishes `ON` to the normal per-address command topic, for example
 state for them, does not optimistically report them as `ON`, and emits only a
 non-retained event noting that the physical transmission is unconfirmed.
 
-Specific X10 device behavior can also be selected with a capability profile:
+Generic device types are user-declared capability profiles. They do not claim
+that the project has verified a particular hardware model. The optional named
+SC546A profile remains experimental and is rejected unless explicitly enabled:
 
 ```text
-X10_DEVICES=A1:Porch Socket:lm15a_socket_rocket,A3:Door Chime:sc546a_chime
+ALLOW_EXPERIMENTAL_PROFILES=true
+X10_DEVICES=A3:Door Chime:sc546a_chime
 ```
 
-Profiles keep product-specific behavior in the bridge, not in mochad-redux.
-They describe statefulness, supported commands, repeatable actions, house-wide
-command responses, learned addressing, secondary channels, and momentary versus
-continuous operation. See
+Selecting an experimental profile logs a warning and reports its lifecycle and
+evidence status in `x10/bridge/status`. Research-only profiles cannot be
+selected and are never replaced silently with a generic type. See
 [`docs/capability-device-registry.md`](docs/capability-device-registry.md).
 
 Friendly names are enabled by default and are used only for Home Assistant
@@ -211,6 +215,9 @@ Example `bridge.json`:
 
 ```json
 {
+  "profiles": {
+    "allow_experimental": false
+  },
   "use_friendly_names": true,
   "devices": [
     {

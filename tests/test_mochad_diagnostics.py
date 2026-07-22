@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 from bridge import Bridge
 from config import MqttTlsConfig
-from models import MochadDiagnostics
+from device_registry import apply_profile
+from models import DeviceConfig, MochadDiagnostics
 from version import BRIDGE_NAME, BRIDGE_VERSION
 
 
@@ -107,6 +108,7 @@ class MochadDiagnosticTests(unittest.TestCase):
     def test_bridge_status_payload_contains_only_safe_tls_attributes(self):
         bridge = object.__new__(Bridge)
         bridge.config = SimpleNamespace(
+            allow_experimental_profiles=False,
             mqtt_tls=MqttTlsConfig(
                 enabled=True,
                 ca_file="/run/secrets/mqtt-ca.crt",
@@ -144,6 +146,44 @@ class MochadDiagnosticTests(unittest.TestCase):
         payload_text = json.dumps(payload)
         self.assertNotIn("/run/secrets", payload_text)
         self.assertNotIn("secret-password", payload_text)
+
+    def test_bridge_status_reports_configured_profile_evidence(self):
+        device = apply_profile(
+            DeviceConfig("A2", "Door Chime"),
+            "sc546a_chime",
+            allow_experimental=True,
+        )
+        bridge = object.__new__(Bridge)
+        bridge.config = SimpleNamespace(
+            allow_experimental_profiles=True,
+            mqtt_tls=MqttTlsConfig(),
+        )
+        bridge.state = SimpleNamespace(
+            available=True,
+            snapshot=lambda: {},
+        )
+        bridge.clients = SimpleNamespace(
+            mqtt=SimpleNamespace(connected=True),
+            mochad=SimpleNamespace(connected=True),
+        )
+        bridge.devices = {"A2": device}
+        bridge._mochad_diagnostics = MochadDiagnostics()
+
+        profile_status = bridge._bridge_status_payload()["device_profiles"]
+
+        self.assertTrue(profile_status["allow_experimental"])
+        self.assertEqual(
+            profile_status["configured"][0],
+            {
+                "address": "A2",
+                "profile_id": "sc546a_chime",
+                "lifecycle": "experimental",
+                "confidence": "well_supported",
+                "fixture_verified": True,
+                "hardware_verified": False,
+                "last_reviewed": "2026-07-21",
+            },
+        )
 
 
 if __name__ == "__main__":

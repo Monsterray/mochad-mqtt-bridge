@@ -6,6 +6,12 @@ This project follows semantic versioning once releases begin.
 
 ## [Unreleased]
 
+### Fixed
+
+- Named hardware profiles now require lifecycle and evidence metadata;
+  experimental profiles require explicit opt-in, and research-only profiles
+  cannot be selected or appear as supported choices.
+
 ## [0.4.0] - 2026-07-16
 
 ### Fixed

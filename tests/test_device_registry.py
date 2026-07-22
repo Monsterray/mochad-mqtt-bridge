@@ -1,171 +1,413 @@
+import json
 import os
 import tempfile
-import json
 import unittest
-from datetime import datetime, timezone
+from dataclasses import replace
 from unittest.mock import patch
 
-from config import create_config_file_if_missing, load_config
-from device_registry import apply_profile, get_profile
+from config import ConfigError, create_config_file_if_missing, load_config
+from device_registry import (
+    DeviceProfile,
+    DeviceProfileRegistry,
+    EvidenceConfidence,
+    EvidenceSource,
+    ProfileEvidence,
+    ProfileLifecycle,
+    ProfileRegistrationError,
+    ProfileSelectionError,
+    RESEARCH_PROFILE_IDS,
+    apply_profile,
+    configured_profile_diagnostics,
+    get_profile,
+    profile_ids,
+    registered_profile_ids,
+    select_profile,
+)
+from discovery import DiscoveryManager
 from models import (
-    BridgeAction,
-    ChannelKind,
     Command,
     DeviceCapability,
     DeviceConfig,
     DeviceType,
-    HouseEvent,
-    OperationMode,
-    RfIdentity,
+    PublishCommandEventAction,
+    PublishStateAction,
     SendDeviceCommandAction,
 )
 from state import StateManager
 
 
-class DeviceRegistryTests(unittest.TestCase):
-    def test_lm15a_profile_uses_learned_addressing_without_dim(self):
-        profile = get_profile("lm15a_socket_rocket")
-
-        self.assertTrue(profile.learned_addressing)
-        self.assertEqual(profile.entity_type, DeviceType.LIGHT)
-        self.assertEqual(profile.supported_commands, frozenset({Command.ON, Command.OFF}))
-        self.assertNotIn(Command.DIM, profile.supported_commands)
-        self.assertTrue(profile.all_lights_on_response)
-        self.assertTrue(profile.all_units_off_response)
-
-    def test_um506_momentary_and_continuous_modes_are_distinct(self):
-        momentary = get_profile("um506_momentary")
-        continuous = get_profile("um506_continuous")
-
-        self.assertFalse(momentary.stateful)
-        self.assertEqual(momentary.operation_mode, OperationMode.MOMENTARY)
-        self.assertEqual(momentary.repeatable_actions, frozenset({Command.ON}))
-        self.assertTrue(momentary.all_units_off_response)
-
-        self.assertTrue(continuous.stateful)
-        self.assertEqual(continuous.operation_mode, OperationMode.CONTINUOUS)
-        self.assertEqual(continuous.supported_commands, frozenset({Command.ON, Command.OFF}))
-        self.assertFalse(continuous.all_lights_on_response)
-        self.assertTrue(continuous.all_units_off_response)
-
-    def test_sc546a_profile_is_action_only_on_command(self):
-        profile = get_profile("sc546a_chime")
-
-        self.assertEqual(profile.entity_type, DeviceType.CHIME)
-        self.assertFalse(profile.stateful)
-        self.assertEqual(profile.supported_commands, frozenset({Command.ON}))
-        self.assertEqual(profile.repeatable_actions, frozenset({Command.ON}))
-        self.assertNotIn(Command.OFF, profile.supported_commands)
-
-    def test_motion_sensor_profiles_have_base_plus_one_dusk_channels(self):
-        for profile_id in ("ms13a_motion", "ms14a_motion", "ms16a_activeeye"):
-            profile = get_profile(profile_id)
-            channels = {(channel.kind, channel.offset) for channel in profile.secondary_channels}
-
-            self.assertIn((ChannelKind.MOTION, 0), channels)
-            self.assertIn((ChannelKind.DUSK_DAWN, 1), channels)
-            self.assertEqual(profile.rf_identity, RfIdentity.STANDARD)
-
-        ms16a = get_profile("ms16a_activeeye")
-        dusk = [
-            channel
-            for channel in ms16a.secondary_channels
-            if channel.kind == ChannelKind.DUSK_DAWN
-        ][0]
-        self.assertFalse(dusk.enabled_by_default)
-
-    def test_pr511_profile_models_sensor_and_dusk_offsets(self):
-        profile = get_profile("pr511_motion_monitor")
-        offsets = [(channel.kind, channel.offset) for channel in profile.secondary_channels]
-
-        self.assertIn((ChannelKind.FLOODLIGHT, 0), offsets)
-        for offset in range(1, 5):
-            self.assertIn((ChannelKind.SENSOR, offset), offsets)
-        for offset in range(5, 9):
-            self.assertIn((ChannelKind.DUSK_DAWN, offset), offsets)
-
-    def test_powerflash_profiles_model_compound_modes(self):
-        mode_1 = get_profile("powerflash_mode_1")
-        mode_2 = get_profile("powerflash_mode_2")
-        mode_3 = get_profile("powerflash_mode_3")
-
-        self.assertEqual(mode_1.operation_mode, OperationMode.ALARM_SEQUENCE)
-        self.assertTrue(mode_1.command_sequences)
-        self.assertFalse(mode_2.stateful)
-        self.assertEqual(mode_2.operation_mode, OperationMode.ALARM_SEQUENCE)
-        self.assertEqual(mode_3.supported_commands, frozenset({Command.ON, Command.OFF}))
-
-    def test_powerhorn_repeated_alarm_sequences_are_explicit(self):
-        profile = get_profile("powerhorn")
-        sequences = {sequence.name: sequence.commands for sequence in profile.command_sequences}
-
-        self.assertFalse(profile.stateful)
-        self.assertEqual(profile.operation_mode, OperationMode.ALARM_SEQUENCE)
-        self.assertEqual(sequences["unit_alarm"], (Command.ON, Command.OFF, Command.ON))
-        self.assertEqual(
-            sequences["house_alarm"],
-            (Command.ALL_LIGHTS_ON, Command.ALL_UNITS_OFF),
-        )
-        self.assertIn(Command.ON, profile.repeatable_actions)
-
-    def test_rr501_profiles_express_exclusive_unit_selection(self):
-        unit_1 = get_profile("rr501_unit_1")
-        unit_9 = get_profile("rr501_unit_9")
-
-        self.assertEqual(unit_1.secondary_channels[0].offset, 0)
-        self.assertEqual(unit_9.secondary_channels[0].offset, 8)
-        self.assertEqual(unit_1.exclusive_groups, unit_9.exclusive_groups)
-        self.assertIn("rr501_internal_outlet", unit_1.exclusive_groups)
-
-    def test_grouped_address_profile_documents_accumulated_addresses(self):
-        profile = get_profile("grouped_address_function")
-
-        self.assertEqual(profile.secondary_channels[0].kind, ChannelKind.GROUPED_ADDRESS)
-        self.assertIn(Command.ON, profile.supported_commands)
-
-    def test_apply_profile_preserves_address_name_and_repeat_tuning(self):
-        device = apply_profile(
-            DeviceConfig(
-                address="A1",
-                name="Porch Socket",
-                command_repeats=3,
-                command_repeat_delay_ms=200,
+def _evidence(
+    confidence: EvidenceConfidence = EvidenceConfidence.CONFIRMED,
+) -> ProfileEvidence:
+    return ProfileEvidence(
+        confidence=confidence,
+        sources=(
+            EvidenceSource(
+                reference="https://example.invalid/manual.pdf",
+                source_type="manufacturer_manual",
+                title="Test manual",
             ),
-            "lm15a_socket_rocket",
+        ),
+        fixture_verified=True,
+        hardware_verified=True,
+        last_reviewed="2026-07-21",
+        reviewed_by="Test maintainer",
+        notes="Synthetic registry test profile.",
+    )
+
+
+def _named_profile(
+    lifecycle: ProfileLifecycle,
+    evidence: ProfileEvidence | None = None,
+) -> DeviceProfile:
+    return DeviceProfile(
+        profile_id=f"test_{lifecycle.value}",
+        model="Test named device",
+        description="Synthetic named profile for registry tests.",
+        entity_type=DeviceType.SWITCH,
+        capabilities=frozenset({DeviceCapability.ON_OFF}),
+        supported_commands=frozenset({Command.ON, Command.OFF}),
+        stateful=True,
+        lifecycle=lifecycle,
+        evidence=evidence,
+    )
+
+
+class DeviceProfileRegistrationTests(unittest.TestCase):
+    def test_supported_profile_listing_excludes_experimental_and_research(self):
+        self.assertEqual(
+            profile_ids(),
+            frozenset({"generic_switch", "generic_light"}),
+        )
+        self.assertEqual(
+            registered_profile_ids(),
+            frozenset(
+                {"generic_switch", "generic_light", "sc546a_chime"}
+            ),
+        )
+        self.assertTrue(RESEARCH_PROFILE_IDS.isdisjoint(registered_profile_ids()))
+
+    def test_named_profile_requires_lifecycle_and_evidence(self):
+        missing_metadata = DeviceProfile(
+            profile_id="missing_metadata",
+            model="Test device",
+            description="Invalid named profile.",
+            entity_type=DeviceType.SWITCH,
+            capabilities=frozenset({DeviceCapability.ON_OFF}),
+            supported_commands=frozenset({Command.ON, Command.OFF}),
+            stateful=True,
         )
 
-        self.assertEqual(device.address, "A1")
-        self.assertEqual(device.name, "Porch Socket")
-        self.assertEqual(device.command_repeats, 3)
-        self.assertEqual(device.command_repeat_delay_ms, 200)
-        self.assertEqual(device.profile, "lm15a_socket_rocket")
-        self.assertTrue(device.learned_addressing)
+        cases = (
+            (replace(missing_metadata, evidence=_evidence()), "lifecycle"),
+            (
+                replace(
+                    missing_metadata,
+                    lifecycle=ProfileLifecycle.EXPERIMENTAL,
+                ),
+                "evidence",
+            ),
+        )
+
+        for profile, field in cases:
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"missing_metadata.*{field}",
+                ):
+                    DeviceProfileRegistry((profile,))
+
+    def test_invalid_lifecycle_values_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for value in ("experimental", " experimental ", "", 1, True):
+            with self.subTest(value=value):
+                invalid = replace(valid, lifecycle=value)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*lifecycle",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_invalid_confidence_values_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for value in ("confirmed", " confirmed ", "", 1, True):
+            with self.subTest(value=value):
+                invalid_evidence = replace(valid.evidence, confidence=value)
+                invalid = replace(valid, evidence=invalid_evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*evidence.confidence",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_verification_flags_require_actual_booleans(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+
+        for field in ("fixture_verified", "hardware_verified"):
+            for value in ("true", "false", 0, 1):
+                with self.subTest(field=field, value=value):
+                    invalid_evidence = replace(
+                        valid.evidence,
+                        **{field: value},
+                    )
+                    invalid = replace(valid, evidence=invalid_evidence)
+                    with self.assertRaisesRegex(
+                        ProfileRegistrationError,
+                        f"test_experimental.*evidence.{field}",
+                    ):
+                        DeviceProfileRegistry((invalid,))
+
+    def test_required_evidence_fields_are_rejected_when_missing(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+        invalid_values = (
+            ("sources", ()),
+            ("last_reviewed", ""),
+            ("last_reviewed", "2026-99-99"),
+            ("reviewed_by", ""),
+            ("notes", "   "),
+        )
+
+        for field, value in invalid_values:
+            with self.subTest(field=field):
+                invalid_evidence = replace(valid.evidence, **{field: value})
+                invalid = replace(valid, evidence=invalid_evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"test_experimental.*evidence.{field}",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_malformed_evidence_sources_are_rejected(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+        malformed_sources = (
+            [valid.evidence.sources[0]],
+            ({"reference": "https://example.invalid/manual.pdf"},),
+            (
+                EvidenceSource(
+                    reference=" https://example.invalid/manual.pdf",
+                    source_type="manufacturer_manual",
+                    title="Test manual",
+                ),
+            ),
+            (
+                EvidenceSource(
+                    reference="https://example.invalid/manual.pdf",
+                    source_type="manufacturer_manual",
+                    title="Test manual",
+                    sha256="not-a-sha256",
+                ),
+            ),
+        )
+
+        for sources in malformed_sources:
+            with self.subTest(sources=sources):
+                invalid = replace(
+                    valid,
+                    evidence=replace(valid.evidence, sources=sources),
+                )
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    "test_experimental.*evidence.sources",
+                ):
+                    DeviceProfileRegistry((invalid,))
+
+    def test_invalid_registration_does_not_mutate_registry(self):
+        valid = _named_profile(ProfileLifecycle.VERIFIED, _evidence())
+        registry = DeviceProfileRegistry((valid,))
+        registered_before = registry.registered_ids()
+        invalid = replace(
+            _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence()),
+            profile_id="invalid_profile",
+            lifecycle="experimental",
+        )
+
+        with self.assertRaisesRegex(
+            ProfileRegistrationError,
+            "invalid_profile.*lifecycle",
+        ):
+            registry.register(invalid)
+
+        self.assertEqual(registry.registered_ids(), registered_before)
+        self.assertIs(registry.get(valid.profile_id), valid)
+
+    def test_verified_profile_policy_errors_identify_evidence_fields(self):
+        cases = (
+            (
+                replace(
+                    _evidence(),
+                    confidence=EvidenceConfidence.INFERRED,
+                ),
+                "evidence.confidence",
+            ),
+            (
+                replace(_evidence(), fixture_verified=False),
+                "evidence.fixture_verified",
+            ),
+            (
+                replace(_evidence(), hardware_verified=False),
+                "evidence.hardware_verified",
+            ),
+        )
+
+        for evidence, field in cases:
+            with self.subTest(field=field):
+                profile = _named_profile(ProfileLifecycle.VERIFIED, evidence)
+                with self.assertRaisesRegex(
+                    ProfileRegistrationError,
+                    f"test_verified.*{field}",
+                ):
+                    DeviceProfileRegistry((profile,))
+
+    def test_research_profile_is_never_selectable(self):
+        registry = DeviceProfileRegistry(
+            (
+                _named_profile(
+                    ProfileLifecycle.RESEARCH,
+                    _evidence(EvidenceConfidence.UNVERIFIED),
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(ProfileSelectionError, "research-only"):
+            registry.select(
+                "test_research",
+                allow_experimental=True,
+            )
+
+    def test_verified_profile_is_normally_selectable(self):
+        profile = _named_profile(
+            ProfileLifecycle.VERIFIED,
+            _evidence(),
+        )
+        registry = DeviceProfileRegistry((profile,))
+
+        self.assertIs(registry.select(profile.profile_id), profile)
+        self.assertIn(profile.profile_id, registry.supported_ids())
+
+    def test_deprecated_profile_load_is_explicit_and_not_offered(self):
+        profile = _named_profile(
+            ProfileLifecycle.DEPRECATED,
+            _evidence(),
+        )
+        registry = DeviceProfileRegistry((profile,))
+
+        self.assertNotIn(profile.profile_id, registry.supported_ids())
+        with self.assertLogs("device_registry", level="WARNING") as logs:
+            self.assertIs(registry.select(profile.profile_id), profile)
+        self.assertIn("Deprecated device profile", logs.output[0])
+
+        with self.assertRaisesRegex(ProfileSelectionError, "deprecated"):
+            registry.select(profile.profile_id, allow_deprecated=False)
+
+
+class GenericCapabilityRegressionTests(unittest.TestCase):
+    def test_generic_switch_light_and_action_behavior_is_unchanged(self):
+        direct_switch = DeviceConfig("A1", "Switch", DeviceType.SWITCH)
+        direct_light = DeviceConfig("A2", "Light", DeviceType.LIGHT)
+        direct_action = DeviceConfig("A3", "Action", DeviceType.CHIME)
+
+        named_switch = apply_profile(
+            DeviceConfig("A1", "Switch"),
+            "generic_switch",
+        )
+        named_light = apply_profile(
+            DeviceConfig("A2", "Light"),
+            "generic_light",
+        )
+
+        self.assertEqual(
+            named_switch.supported_commands,
+            direct_switch.supported_commands,
+        )
+        self.assertEqual(named_switch.stateful, direct_switch.stateful)
+        self.assertEqual(
+            named_light.supported_commands,
+            direct_light.supported_commands,
+        )
+        self.assertEqual(named_light.stateful, direct_light.stateful)
+        self.assertEqual(
+            direct_action.supported_commands,
+            frozenset({Command.ON}),
+        )
+        self.assertFalse(direct_action.stateful)
+        self.assertEqual(
+            direct_action.repeatable_actions,
+            frozenset({Command.ON}),
+        )
+
+    def test_generic_home_assistant_discovery_is_unchanged(self):
+        discovery = DiscoveryManager(
+            discovery_prefix="homeassistant",
+            base_topic="x10",
+        )
+        switch = discovery.discovery_messages(
+            DeviceConfig("A1", "Switch", DeviceType.SWITCH)
+        )[0]
+        light = discovery.discovery_messages(
+            DeviceConfig("A2", "Light", DeviceType.LIGHT)
+        )[0]
+
+        self.assertEqual(
+            switch.topic,
+            "homeassistant/switch/x10_A1/config",
+        )
+        self.assertEqual(switch.payload["state_topic"], "x10/A1/state")
+        self.assertEqual(switch.payload["command_topic"], "x10/A1/command")
+        self.assertEqual(
+            light.topic,
+            "homeassistant/light/x10_A2/config",
+        )
+        self.assertEqual(light.payload["state_topic"], "x10/A2/state")
+        self.assertEqual(light.payload["command_topic"], "x10/A2/command")
 
 
 class DeviceProfileConfigTests(unittest.TestCase):
-    def test_env_devices_can_use_profile_as_type_field(self):
+    def test_unknown_device_type_remains_an_unknown_type_error(self):
+        with patch.dict(
+            os.environ,
+            {"X10_DEVICES": "A2:Unknown Device:not_a_profile"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ConfigError, "Unknown device type"):
+                load_config()
+
+    def test_experimental_profile_is_rejected_by_default(self):
         with patch.dict(
             os.environ,
             {"X10_DEVICES": "A2:Door Chime:sc546a_chime"},
             clear=True,
         ):
-            config = load_config()
+            with self.assertRaisesRegex(ConfigError, "experimental"):
+                load_config()
 
-        device = config.devices["A2"]
-        self.assertEqual(device.profile, "sc546a_chime")
-        self.assertEqual(device.entity_type, DeviceType.CHIME)
-        self.assertFalse(device.stateful)
+    def test_experimental_profile_works_with_environment_opt_in(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ALLOW_EXPERIMENTAL_PROFILES": "true",
+                "X10_DEVICES": "A2:Door Chime:sc546a_chime",
+            },
+            clear=True,
+        ):
+            with self.assertLogs("device_registry", level="WARNING"):
+                config = load_config()
 
-    def test_json_devices_can_use_profile_field(self):
+        self.assertTrue(config.allow_experimental_profiles)
+        self.assertEqual(config.devices["A2"].profile, "sc546a_chime")
+
+    def test_experimental_profile_works_with_file_opt_in(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
             json.dump(
                 {
+                    "profiles": {"allow_experimental": True},
                     "devices": [
                         {
-                            "address": "A1",
-                            "name": "Porch Socket",
-                            "type": "light",
-                            "profile": "lm15a_socket_rocket",
+                            "address": "A2",
+                            "name": "Door Chime",
+                            "type": "chime",
+                            "profile": "sc546a_chime",
                         }
                     ],
                 },
@@ -178,20 +420,31 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 {"BRIDGE_CONFIG_FILE": config_file.name},
                 clear=True,
             ):
-                config = load_config()
+                with self.assertLogs("device_registry", level="WARNING"):
+                    config = load_config()
 
-        device = config.devices["A1"]
-        self.assertEqual(device.profile, "lm15a_socket_rocket")
-        self.assertTrue(device.learned_addressing)
-        self.assertNotIn(Command.DIM, device.supported_commands)
+        self.assertTrue(config.allow_experimental_profiles)
+        self.assertEqual(config.devices["A2"].profile, "sc546a_chime")
 
-    def test_generated_config_preserves_profile(self):
+    def test_research_profile_is_rejected_even_with_opt_in(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ALLOW_EXPERIMENTAL_PROFILES": "true",
+                "X10_DEVICES": "A1:Socket:lm15a_socket_rocket",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ConfigError, "research-only"):
+                load_config()
+
+    def test_generated_config_preserves_profile_opt_in(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = os.path.join(directory, "bridge.json")
-
             with patch.dict(
                 os.environ,
                 {
+                    "ALLOW_EXPERIMENTAL_PROFILES": "true",
                     "BRIDGE_CONFIG_FILE": config_path,
                     "X10_DEVICES": "A2:Door Chime:sc546a_chime",
                 },
@@ -200,89 +453,83 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 config = load_config()
 
             self.assertTrue(create_config_file_if_missing(config))
-
             with open(config_path, encoding="utf-8") as handle:
                 payload = json.load(handle)
 
+        self.assertEqual(
+            payload["profiles"],
+            {"allow_experimental": True},
+        )
         self.assertEqual(payload["devices"][0]["profile"], "sc546a_chime")
 
 
-class DeviceCapabilityStateTests(unittest.TestCase):
-    def _action_types(self, actions: list[BridgeAction]) -> list[type[BridgeAction]]:
-        return [type(action) for action in actions]
-
-    def test_house_commands_respect_device_capability_flags(self):
-        lamp = apply_profile(
-            DeviceConfig(address="A1", name="Socket Rocket"),
-            "lm15a_socket_rocket",
-        )
-        universal = apply_profile(
-            DeviceConfig(address="A2", name="Relay"),
-            "um506_continuous",
-        )
-        state = StateManager([lamp, universal])
-
-        all_lights_actions = state.apply(
-            HouseEvent(
-                timestamp=datetime.now(timezone.utc),
-                direction=None,  # type: ignore[arg-type]
-                transport=None,  # type: ignore[arg-type]
-                command=Command.ALL_LIGHTS_ON,
-                house="A",
-            )
-        )
-        self.assertEqual(
-            [action.address for action in all_lights_actions if hasattr(action, "address")],
-            ["A1"],
-        )
-
-        all_units_actions = state.apply(
-            HouseEvent(
-                timestamp=datetime.now(timezone.utc),
-                direction=None,  # type: ignore[arg-type]
-                transport=None,  # type: ignore[arg-type]
-                command=Command.ALL_UNITS_OFF,
-                house="A",
-            )
-        )
-        self.assertEqual(
-            [action.address for action in all_units_actions if hasattr(action, "address")],
-            ["A1", "A2"],
-        )
-
-    def test_repeated_alarm_actions_are_not_deduped(self):
-        horn = apply_profile(
-            DeviceConfig(address="A4", name="PowerHorn"),
-            "powerhorn",
-        )
-        state = StateManager([horn])
-
-        commands = [Command.ON, Command.OFF, Command.ON]
-        sent: list[Command] = []
-        for command in commands:
-            actions = state.optimistic_update("A4", command)
-            send_actions = [
-                action
-                for action in actions
-                if isinstance(action, SendDeviceCommandAction)
-            ]
-            self.assertEqual(len(send_actions), 1)
-            sent.append(send_actions[0].command)
-
-        self.assertEqual(sent, commands)
-
-    def test_repeated_action_only_on_commands_are_not_deduped(self):
-        chime = apply_profile(
-            DeviceConfig(address="A3", name="Door Chime"),
+class Sc546aBehaviorTests(unittest.TestCase):
+    def test_sc546a_remains_action_only_and_unconfirmed(self):
+        device = apply_profile(
+            DeviceConfig("A2", "Door Chime"),
             "sc546a_chime",
+            allow_experimental=True,
         )
-        state = StateManager([chime])
+        state = StateManager([device])
 
-        first = state.optimistic_update("A3", Command.ON)
-        second = state.optimistic_update("A3", Command.ON)
+        first = state.optimistic_update("A2", Command.ON)
+        second = state.optimistic_update("A2", Command.ON)
+        actions = first + second
 
-        self.assertIn(SendDeviceCommandAction, self._action_types(first))
-        self.assertIn(SendDeviceCommandAction, self._action_types(second))
+        self.assertEqual(
+            sum(isinstance(action, SendDeviceCommandAction) for action in actions),
+            2,
+        )
+        self.assertFalse(
+            any(isinstance(action, PublishStateAction) for action in actions)
+        )
+        events = [
+            action
+            for action in actions
+            if isinstance(action, PublishCommandEventAction)
+        ]
+        self.assertEqual(len(events), 2)
+        self.assertTrue(
+            all(event.payload["confirmed"] is False for event in events)
+        )
+
+        discovery = DiscoveryManager(
+            discovery_prefix="homeassistant",
+            base_topic="x10",
+        ).discovery_messages(device)[0]
+        self.assertEqual(
+            discovery.topic,
+            "homeassistant/button/x10_A2/config",
+        )
+        self.assertNotIn("state_topic", discovery.payload)
+
+    def test_profile_diagnostics_report_evidence_without_support_claim(self):
+        device = apply_profile(
+            DeviceConfig("A2", "Door Chime"),
+            "sc546a_chime",
+            allow_experimental=True,
+        )
+
+        self.assertEqual(
+            configured_profile_diagnostics({"A2": device}),
+            [
+                {
+                    "address": "A2",
+                    "profile_id": "sc546a_chime",
+                    "lifecycle": "experimental",
+                    "confidence": "well_supported",
+                    "fixture_verified": True,
+                    "hardware_verified": False,
+                    "last_reviewed": "2026-07-21",
+                }
+            ],
+        )
+        profile = get_profile("sc546a_chime")
+        self.assertIs(profile.lifecycle, ProfileLifecycle.EXPERIMENTAL)
+
+    def test_direct_selection_requires_explicit_opt_in(self):
+        with self.assertRaisesRegex(ProfileSelectionError, "experimental"):
+            select_profile("sc546a_chime")
 
 
 if __name__ == "__main__":
