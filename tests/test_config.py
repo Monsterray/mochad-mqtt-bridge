@@ -238,6 +238,7 @@ class ConfigTests(unittest.TestCase):
                         "type": "light",
                     }
                 ],
+                "profiles": {"allow_experimental": False},
                 "use_friendly_names": True,
             },
         )

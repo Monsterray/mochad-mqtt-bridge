@@ -19,6 +19,7 @@ deprecated/
 tests/
 tools/
 scripts/
+research/
 docker-compose.override.yml
 CHANGELOG.md
 CONTRIBUTING.md

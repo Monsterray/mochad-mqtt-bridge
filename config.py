@@ -15,7 +15,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from device_registry import apply_profile, get_profile, profile_ids
+from device_registry import (
+    RESEARCH_PROFILE_IDS,
+    apply_profile,
+    registered_profile_ids,
+)
 from models import DeviceConfig, DeviceType
 
 
@@ -103,6 +107,8 @@ class Config:
     )
 
     use_friendly_names: bool = True
+
+    allow_experimental_profiles: bool = False
 
     devices: dict[str, DeviceConfig] = field(default_factory=dict)
 
@@ -344,12 +350,16 @@ def _parse_device_type(value: str) -> DeviceType:
 def _parse_device_type_and_profile(value: str) -> tuple[DeviceType, str | None]:
     normalized = value.strip().lower()
 
-    if normalized in profile_ids():
-        try:
-            profile = get_profile(normalized)
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
-        return profile.entity_type, profile.profile_id
+    if normalized in {"light", "switch", "chime"}:
+        return _parse_device_type(value), None
+
+    if (
+        normalized in registered_profile_ids()
+        or normalized in RESEARCH_PROFILE_IDS
+    ):
+        # Profile selection and lifecycle validation happen in apply_profile().
+        # The placeholder type is replaced atomically only after validation.
+        return DeviceType.SWITCH, normalized
 
     return _parse_device_type(value), None
 
@@ -421,6 +431,7 @@ def _device_config(
     command_repeats: object = DEFAULT_COMMAND_REPEATS,
     command_repeat_delay_ms: object = DEFAULT_COMMAND_REPEAT_DELAY_MS,
     profile: str | None = None,
+    allow_experimental_profiles: bool = False,
 ) -> DeviceConfig:
     device = DeviceConfig(
         address=address,
@@ -436,7 +447,11 @@ def _device_config(
         return device
 
     try:
-        return apply_profile(device, profile)
+        return apply_profile(
+            device,
+            profile,
+            allow_experimental=allow_experimental_profiles,
+        )
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -444,6 +459,7 @@ def _device_config(
 def parse_devices(
     raw: str | None,
     use_friendly_names: bool = True,
+    allow_experimental_profiles: bool = False,
 ) -> dict[str, DeviceConfig]:
 
     devices: dict[str, DeviceConfig] = {}
@@ -526,6 +542,7 @@ def parse_devices(
                 command_repeats=repeats,
                 command_repeat_delay_ms=repeat_delay_ms,
                 profile=profile,
+                allow_experimental_profiles=allow_experimental_profiles,
             )
 
             continue
@@ -540,6 +557,7 @@ def parse_devices(
 def parse_device_config(
     raw: object,
     use_friendly_names: bool = True,
+    allow_experimental_profiles: bool = False,
 ) -> dict[str, DeviceConfig]:
     """
     Parse device configuration from the optional JSON config file.
@@ -555,13 +573,25 @@ def parse_device_config(
         return {}
 
     if isinstance(raw, str):
-        return parse_devices(raw, use_friendly_names=use_friendly_names)
+        return parse_devices(
+            raw,
+            use_friendly_names=use_friendly_names,
+            allow_experimental_profiles=allow_experimental_profiles,
+        )
 
     if isinstance(raw, list):
-        return _parse_device_list(raw, use_friendly_names)
+        return _parse_device_list(
+            raw,
+            use_friendly_names,
+            allow_experimental_profiles,
+        )
 
     if isinstance(raw, dict):
-        return _parse_device_mapping(raw, use_friendly_names)
+        return _parse_device_mapping(
+            raw,
+            use_friendly_names,
+            allow_experimental_profiles,
+        )
 
     raise ConfigError(
         "Config file field 'devices' must be a string, list, or object."
@@ -571,6 +601,7 @@ def parse_device_config(
 def _parse_device_list(
     raw: list,
     use_friendly_names: bool,
+    allow_experimental_profiles: bool,
 ) -> dict[str, DeviceConfig]:
     devices: dict[str, DeviceConfig] = {}
 
@@ -610,6 +641,7 @@ def _parse_device_list(
             command_repeats=repeats,
             command_repeat_delay_ms=repeat_delay_ms,
             profile=None if profile is None else str(profile),
+            allow_experimental_profiles=allow_experimental_profiles,
         )
 
     return devices
@@ -618,6 +650,7 @@ def _parse_device_list(
 def _parse_device_mapping(
     raw: dict,
     use_friendly_names: bool,
+    allow_experimental_profiles: bool,
 ) -> dict[str, DeviceConfig]:
     devices: dict[str, DeviceConfig] = {}
 
@@ -667,6 +700,7 @@ def _parse_device_mapping(
                 command_repeats=repeats,
                 command_repeat_delay_ms=repeat_delay_ms,
                 profile=None if profile is None else str(profile),
+                allow_experimental_profiles=allow_experimental_profiles,
             )
             continue
 
@@ -791,6 +825,9 @@ def _device_to_file_payload(device: DeviceConfig) -> dict:
 
 def _config_file_payload(config: Config) -> dict:
     payload: dict[str, object] = {
+        "profiles": {
+            "allow_experimental": config.allow_experimental_profiles,
+        },
         "use_friendly_names": config.use_friendly_names,
         "devices": [
             _device_to_file_payload(device)
@@ -867,6 +904,7 @@ def _file_bool(
 def _devices_from_sources(
     file_config: dict,
     use_friendly_names: bool,
+    allow_experimental_profiles: bool,
 ) -> dict[str, DeviceConfig]:
     has_devices = "devices" in file_config
     has_x10_devices = "x10_devices" in file_config
@@ -880,17 +918,34 @@ def _devices_from_sources(
         return parse_device_config(
             file_config["devices"],
             use_friendly_names=use_friendly_names,
+            allow_experimental_profiles=allow_experimental_profiles,
         )
 
     if has_x10_devices:
         return parse_devices(
             str(file_config["x10_devices"]),
             use_friendly_names=use_friendly_names,
+            allow_experimental_profiles=allow_experimental_profiles,
         )
 
     return parse_devices(
         _get_env("X10_DEVICES"),
         use_friendly_names=use_friendly_names,
+        allow_experimental_profiles=allow_experimental_profiles,
+    )
+
+
+def _allow_experimental_profiles(file_config: dict) -> bool:
+    profile_options = file_config.get("profiles", {})
+    if not isinstance(profile_options, dict):
+        raise ConfigError(
+            "Config file field 'profiles' must be an object."
+        )
+
+    return _file_bool(
+        profile_options,
+        "allow_experimental",
+        _get_bool("ALLOW_EXPERIMENTAL_PROFILES", False),
     )
 
 
@@ -902,6 +957,7 @@ def load_config() -> Config:
         "use_friendly_names",
         _get_bool("X10_USE_FRIENDLY_NAMES", True),
     )
+    allow_experimental_profiles = _allow_experimental_profiles(file_config)
 
     config = Config(
 
@@ -960,9 +1016,12 @@ def load_config() -> Config:
 
         use_friendly_names=use_friendly_names,
 
+        allow_experimental_profiles=allow_experimental_profiles,
+
         devices=_devices_from_sources(
             file_config,
             use_friendly_names,
+            allow_experimental_profiles,
         ),
 
         discovery_cleanup=_get_bool(
