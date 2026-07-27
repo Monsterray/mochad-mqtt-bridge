@@ -171,6 +171,7 @@ the checks attached to the exact tested commit.
 - [MQTT topics and bridge controls](docs/mqtt-topics.md)
 - [Capability-driven device registry](docs/capability-device-registry.md)
 - [Named-profile migration](docs/device-profile-migration.md)
+- [Sanitized support bundles](docs/support-bundles.md)
 - [Compatibility](docs/compatibility.md)
 - [Future mochad JSON API](docs/future-mochad-json-api.md)
 - [Release engineering](docs/release-engineering.md)

@@ -6,6 +6,11 @@ This project follows semantic versioning once releases begin.
 
 ## [Unreleased]
 
+### Added
+
+- A local sanitized support-bundle collector with bounded inputs,
+  deterministic pseudonyms, file checksums, and fail-closed archive scanning.
+
 ### Fixed
 
 - Named hardware profiles now require lifecycle and evidence metadata;
