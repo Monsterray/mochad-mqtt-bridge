@@ -19,12 +19,14 @@ Named hardware profiles require structured evidence and exactly one lifecycle:
 
 - `research`: recorded outside production registration and never selectable;
 - `experimental`: selectable only with explicit configuration opt-in;
+- `candidate`: pending final support review and selectable only with opt-in;
 - `verified`: normally selectable;
 - `deprecated`: loaded from existing configurations with a warning but omitted
   from supported-profile listings.
 
 Evidence records contain confidence, source references, fixture-verification
-state, hardware-verification state, last review information, and notes. The
+state, hardware-verification state, per-claim evidence, last review
+information, and notes. The
 confidence vocabulary is `confirmed`, `well_supported`,
 `community_reported`, `inferred`, and `unverified`.
 
@@ -88,4 +90,6 @@ The lifecycle gate does not alter generic discovery, state, retention,
 deduplication, or command behavior.
 
 See [device profile migration](device-profile-migration.md) for existing
-configuration guidance.
+configuration guidance. The
+[supported-profile catalog](supported-profiles.md) is generated directly from
+the validated production registry.

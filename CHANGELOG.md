@@ -6,6 +6,12 @@ This project follows semantic versioning once releases begin.
 
 ## [Unreleased]
 
+### Added
+
+- Device-profile schema v2 with typed per-claim evidence, explicit v1
+  configuration migration, candidate lifecycle gating, bounded declarative
+  sequences, and a generated supported-profile catalog.
+
 ### Fixed
 
 - Named hardware profiles now require lifecycle and evidence metadata;
