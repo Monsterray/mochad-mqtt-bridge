@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "repository": "mochad-mqtt-bridge",
+  "repository_type": "python-mqtt-bridge",
+  "canonical_url": "https://github.com/Monsterray/mochad-mqtt-bridge.git",
+  "profiles": {
+    "local": {
+      "docs": {"priority": 10, "commands": [["scripts/validate/version-consistency.sh"]]},
+      "fast": {
+        "priority": 20,
+        "commands": [
+          ["scripts/validate/shellcheck.sh"],
+          ["{python}", "-m", "compileall", "-q", "."],
+          ["{python}", "-m", "pytest", "-m", "not integration and not lifecycle and not tls and not container"]
+        ]
+      }
+    },
+    "ubuntu": {
+      "source": {"priority": 20, "delegate": "validate-bundle.sh"}
+    }
+  },
+  "path_rules": [
+    {"pattern": ".validation/**", "owner": "validation-policy", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "*.py", "owner": "bridge-runtime", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "protocol/**", "owner": "protocol", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "tests/**", "owner": "bridge-tests", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "tools/**", "owner": "maintenance-tools", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "scripts/**", "owner": "release-validation-tooling", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "Dockerfile", "owner": "image-build", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "docker-*.sh", "owner": "container-runtime", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "docker-compose*.yml", "owner": "compose", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "release/**", "owner": "release-inputs", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": ".github/**", "owner": "ci", "local_profile": "docs", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "docs/**", "owner": "documentation", "local_profile": "docs", "ubuntu_profile": null},
+    {"pattern": "research/**", "owner": "research", "local_profile": "docs", "ubuntu_profile": null},
+    {"pattern": "validation/**", "owner": "release-evidence", "local_profile": "docs", "ubuntu_profile": null},
+    {"pattern": "*.md", "owner": "documentation", "local_profile": "docs", "ubuntu_profile": null},
+    {"pattern": ".dockerignore", "owner": "image-build", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": ".env.example", "owner": "runtime-configuration", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": ".gitignore", "owner": "repository-metadata", "local_profile": "docs", "ubuntu_profile": null},
+    {"pattern": "pytest.ini", "owner": "test-configuration", "local_profile": "fast", "ubuntu_profile": "source"},
+    {"pattern": "requirements*.txt", "owner": "dependencies", "local_profile": "fast", "ubuntu_profile": "source", "docker": true},
+    {"pattern": "VERSION", "owner": "release-version", "local_profile": "fast", "ubuntu_profile": "source", "docker": true}
+  ],
+  "available_validation_scripts": [
+    "scripts/validate/shellcheck.sh",
+    "scripts/validate/version-consistency.sh",
+    "scripts/validate/container_permissions.sh",
+    "scripts/validate/image_labels.py"
+  ],
+  "docker_integration": "required-separate-runner",
+  "hardware_boundary": "human-approved-bridge-workflow",
+  "source_archive_required": false,
+  "staged_install_required": false,
+  "bridge_validation_venv": "/srv/x10-dev/venvs/bridge-validation"
+}
