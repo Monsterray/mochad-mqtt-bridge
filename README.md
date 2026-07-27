@@ -1,4 +1,4 @@
-# MQTT Mochad Bridge
+# mochad-mqtt-bridge
 
 [![Python CI](https://github.com/Monsterray/mochad-mqtt-bridge/actions/workflows/bridge-python-ci.yml/badge.svg?branch=develop)](https://github.com/Monsterray/mochad-mqtt-bridge/actions/workflows/bridge-python-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Monsterray/mochad-mqtt-bridge)](https://github.com/Monsterray/mochad-mqtt-bridge/releases)
@@ -156,8 +156,8 @@ permissions, TLS, and secret-file behavior are in
 The project version comes from [VERSION](VERSION), with immutable release image
 inputs tracked separately in [release/versions.env](release/versions.env).
 
-The current `0.4.x` line is a cautious public beta. Software can confirm that a
-command was transmitted to mochad, but not that a physical X10 module acted.
+The current release line is a cautious public beta. Software can confirm that
+a command was transmitted to mochad, but not that a physical X10 module acted.
 Named profiles are exposed according to their evidence lifecycle rather than
 being presented as broadly supported.
 
