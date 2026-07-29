@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from device_registry import (
+    PROFILE_SCHEMA_VERSION,
     RESEARCH_PROFILE_IDS,
     apply_profile,
     registered_profile_ids,
@@ -805,7 +806,23 @@ def _load_config_file(path: str | None) -> dict:
             f"BRIDGE_CONFIG_FILE '{path}' must contain a JSON object."
         )
 
+    _validate_profile_schema_version(data)
     return data
+
+
+def _validate_profile_schema_version(data: dict) -> None:
+    """Accept historical v1 selection syntax and the current v2 syntax."""
+
+    version = data.get("profile_schema_version", 1)
+    if type(version) is not int:
+        raise ConfigError(
+            "Config file field 'profile_schema_version' must be integer 1 or 2."
+        )
+    if version not in {1, PROFILE_SCHEMA_VERSION}:
+        raise ConfigError(
+            "Config file field 'profile_schema_version' is unsupported: "
+            f"{version!r}."
+        )
 
 
 def _device_to_file_payload(device: DeviceConfig) -> dict:
@@ -825,6 +842,7 @@ def _device_to_file_payload(device: DeviceConfig) -> dict:
 
 def _config_file_payload(config: Config) -> dict:
     payload: dict[str, object] = {
+        "profile_schema_version": PROFILE_SCHEMA_VERSION,
         "profiles": {
             "allow_experimental": config.allow_experimental_profiles,
         },

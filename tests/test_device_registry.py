@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from dataclasses import replace
@@ -7,10 +8,13 @@ from unittest.mock import patch
 
 from config import ConfigError, create_config_file_if_missing, load_config
 from device_registry import (
+    MAX_SEQUENCE_STEPS,
     DeviceProfile,
     DeviceProfileRegistry,
+    EvidenceClaim,
     EvidenceConfidence,
     EvidenceSource,
+    GlobalCommandResponse,
     ProfileEvidence,
     ProfileLifecycle,
     ProfileRegistrationError,
@@ -18,7 +22,10 @@ from device_registry import (
     RESEARCH_PROFILE_IDS,
     apply_profile,
     configured_profile_diagnostics,
+    generated_supported_profiles_markdown,
     get_profile,
+    global_command_response,
+    profile_schema_payload,
     profile_ids,
     registered_profile_ids,
     select_profile,
@@ -46,6 +53,8 @@ def _evidence(
                 reference="https://example.invalid/manual.pdf",
                 source_type="manufacturer_manual",
                 title="Test manual",
+                source_id="test_manual",
+                locator="Section 1",
             ),
         ),
         fixture_verified=True,
@@ -53,6 +62,16 @@ def _evidence(
         last_reviewed="2026-07-21",
         reviewed_by="Test maintainer",
         notes="Synthetic registry test profile.",
+        claims=(
+            EvidenceClaim(
+                claim_id="on_off",
+                statement="The device responds to ON and OFF.",
+                confidence=confidence,
+                source_ids=("test_manual",),
+                fixture_verified=True,
+                hardware_verified=True,
+            ),
+        ),
     )
 
 
@@ -68,6 +87,8 @@ def _named_profile(
         capabilities=frozenset({DeviceCapability.ON_OFF}),
         supported_commands=frozenset({Command.ON, Command.OFF}),
         stateful=True,
+        manufacturer="Test",
+        category="switch",
         lifecycle=lifecycle,
         evidence=evidence,
     )
@@ -167,6 +188,7 @@ class DeviceProfileRegistrationTests(unittest.TestCase):
             ("last_reviewed", "2026-99-99"),
             ("reviewed_by", ""),
             ("notes", "   "),
+            ("claims", ()),
         )
 
         for field, value in invalid_values:
@@ -178,6 +200,23 @@ class DeviceProfileRegistrationTests(unittest.TestCase):
                     f"test_experimental.*evidence.{field}",
                 ):
                     DeviceProfileRegistry((invalid,))
+
+    def test_claim_sources_must_resolve(self):
+        valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
+        invalid_claim = replace(
+            valid.evidence.claims[0],
+            source_ids=("missing_source",),
+        )
+        invalid = replace(
+            valid,
+            evidence=replace(valid.evidence, claims=(invalid_claim,)),
+        )
+
+        with self.assertRaisesRegex(
+            ProfileRegistrationError,
+            "evidence.claims.*unknown source",
+        ):
+            DeviceProfileRegistry((invalid,))
 
     def test_malformed_evidence_sources_are_rejected(self):
         valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
@@ -276,6 +315,22 @@ class DeviceProfileRegistrationTests(unittest.TestCase):
                 allow_experimental=True,
             )
 
+    def test_candidate_profile_requires_explicit_opt_in(self):
+        profile = _named_profile(
+            ProfileLifecycle.CANDIDATE,
+            _evidence(),
+        )
+        registry = DeviceProfileRegistry((profile,))
+
+        with self.assertRaisesRegex(ProfileSelectionError, "candidate"):
+            registry.select(profile.profile_id)
+        with self.assertLogs("device_registry", level="WARNING"):
+            self.assertIs(
+                registry.select(profile.profile_id, allow_experimental=True),
+                profile,
+            )
+        self.assertNotIn(profile.profile_id, registry.supported_ids())
+
     def test_verified_profile_is_normally_selectable(self):
         profile = _named_profile(
             ProfileLifecycle.VERIFIED,
@@ -361,6 +416,71 @@ class GenericCapabilityRegressionTests(unittest.TestCase):
         )
         self.assertEqual(light.payload["state_topic"], "x10/A2/state")
         self.assertEqual(light.payload["command_topic"], "x10/A2/command")
+
+
+class ProfileSchemaV2Tests(unittest.TestCase):
+    def test_schema_v2_contains_capability_policy_and_evidence_sections(self):
+        payload = profile_schema_payload(get_profile("sc546a_chime"))
+
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["identity"]["model"], "SC546A Remote Chime")
+        self.assertEqual(payload["state_policy"]["kind"], "action_only")
+        self.assertEqual(payload["home_assistant"]["entity_type"], "chime")
+        self.assertEqual(payload["command_capabilities"]["supported"], ["ON"])
+        self.assertEqual(
+            payload["evidence"]["claims"][0]["claim_id"],
+            "action_only_on",
+        )
+
+    def test_global_command_inference_is_explicit(self):
+        light = get_profile("generic_light")
+        chime = get_profile("sc546a_chime")
+
+        self.assertIs(
+            global_command_response(light, Command.ALL_LIGHTS_ON),
+            GlobalCommandResponse.SET_ON,
+        )
+        self.assertIs(
+            global_command_response(chime, Command.ALL_LIGHTS_ON),
+            GlobalCommandResponse.IGNORE,
+        )
+        self.assertIs(
+            global_command_response(chime, Command.ALL_UNITS_OFF),
+            GlobalCommandResponse.IGNORE,
+        )
+
+    def test_sequence_step_limit_is_enforced(self):
+        from models import CommandSequence
+
+        profile = replace(
+            _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence()),
+            command_sequences=(
+                CommandSequence(
+                    name="too_long",
+                    commands=(Command.ON,) * (MAX_SEQUENCE_STEPS + 1),
+                ),
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ProfileRegistrationError,
+            "command_sequences.*commands",
+        ):
+            DeviceProfileRegistry((profile,))
+
+    def test_generated_profile_document_is_deterministic_and_excludes_research(self):
+        first = generated_supported_profiles_markdown()
+        second = generated_supported_profiles_markdown()
+
+        self.assertEqual(first, second)
+        self.assertIn("`generic_switch`", first)
+        self.assertIn("`sc546a_chime`", first)
+        for profile_id in RESEARCH_PROFILE_IDS:
+            self.assertNotIn(profile_id, first)
+        committed = (
+            Path(__file__).parents[1] / "docs" / "supported-profiles.md"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(committed, first)
 
 
 class DeviceProfileConfigTests(unittest.TestCase):
@@ -460,7 +580,50 @@ class DeviceProfileConfigTests(unittest.TestCase):
             payload["profiles"],
             {"allow_experimental": True},
         )
+        self.assertEqual(payload["profile_schema_version"], 2)
         self.assertEqual(payload["devices"][0]["profile"], "sc546a_chime")
+
+    def test_explicit_v1_config_is_migrated_before_profile_selection(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            json.dump(
+                {
+                    "profile_schema_version": 1,
+                    "devices": [
+                        {
+                            "address": "A1",
+                            "name": "Legacy switch",
+                            "type": "switch",
+                        }
+                    ],
+                },
+                config_file,
+            )
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                config = load_config()
+
+        self.assertEqual(config.devices["A1"].name, "Legacy switch")
+
+    def test_unknown_profile_schema_version_fails_clearly(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
+            json.dump({"profile_schema_version": 99}, config_file)
+            config_file.flush()
+
+            with patch.dict(
+                os.environ,
+                {"BRIDGE_CONFIG_FILE": config_file.name},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    ConfigError,
+                    "profile_schema_version.*unsupported",
+                ):
+                    load_config()
 
 
 class Sc546aBehaviorTests(unittest.TestCase):

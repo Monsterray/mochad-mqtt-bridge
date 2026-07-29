@@ -27,11 +27,14 @@ from models import (
 
 _LOG = logging.getLogger(__name__)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PROFILE_SCHEMA_VERSION = 2
+MAX_SEQUENCE_STEPS = 32
 
 
 class ProfileLifecycle(str, Enum):
     RESEARCH = "research"
     EXPERIMENTAL = "experimental"
+    CANDIDATE = "candidate"
     VERIFIED = "verified"
     DEPRECATED = "deprecated"
 
@@ -44,6 +47,21 @@ class EvidenceConfidence(str, Enum):
     UNVERIFIED = "unverified"
 
 
+class PhysicalConfirmationCapability(str, Enum):
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+    DEVICE_REPORTED = "device_reported"
+    INDEPENDENT_RETURN = "independent_return"
+
+
+class GlobalCommandResponse(str, Enum):
+    IGNORE = "ignore"
+    SET_ON = "set_on"
+    SET_OFF = "set_off"
+    UNCERTAIN = "uncertain"
+    ACTION = "action"
+
+
 @dataclass(slots=True, frozen=True)
 class EvidenceSource:
     """One reviewable source supporting a named profile."""
@@ -52,6 +70,20 @@ class EvidenceSource:
     source_type: str
     title: str
     sha256: str | None = None
+    source_id: str = ""
+    locator: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class EvidenceClaim:
+    """Evidence attached to one named-profile behavior claim."""
+
+    claim_id: str
+    statement: str
+    confidence: EvidenceConfidence
+    source_ids: tuple[str, ...]
+    fixture_verified: bool
+    hardware_verified: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -65,6 +97,7 @@ class ProfileEvidence:
     last_reviewed: str
     reviewed_by: str
     notes: str
+    claims: tuple[EvidenceClaim, ...] = ()
 
     def diagnostics(self) -> dict[str, object]:
         return {
@@ -86,6 +119,9 @@ class DeviceProfile:
     capabilities: frozenset[DeviceCapability]
     supported_commands: frozenset[Command]
     stateful: bool
+    schema_version: int = PROFILE_SCHEMA_VERSION
+    manufacturer: str = "X10"
+    category: str = "module"
     is_generic: bool = False
     lifecycle: ProfileLifecycle | None = None
     evidence: ProfileEvidence | None = None
@@ -99,6 +135,9 @@ class DeviceProfile:
     operation_mode: OperationMode = OperationMode.CONTINUOUS
     command_sequences: tuple[CommandSequence, ...] = ()
     rf_identity: RfIdentity = RfIdentity.STANDARD
+    confirmation_capability: PhysicalConfirmationCapability = (
+        PhysicalConfirmationCapability.UNAVAILABLE
+    )
 
     def diagnostics(self) -> dict[str, object] | None:
         if self.is_generic or self.lifecycle is None or self.evidence is None:
@@ -165,16 +204,21 @@ class DeviceProfileRegistry:
                 "wait for the profile to complete evidence review."
             )
 
-        if lifecycle is ProfileLifecycle.EXPERIMENTAL:
+        if lifecycle in {
+            ProfileLifecycle.EXPERIMENTAL,
+            ProfileLifecycle.CANDIDATE,
+        }:
             if not allow_experimental:
                 raise ProfileSelectionError(
-                    f"Device profile '{profile.profile_id}' is experimental. "
+                    f"Device profile '{profile.profile_id}' is "
+                    f"{lifecycle.value}. "
                     "Set profiles.allow_experimental=true in bridge.json or "
                     "ALLOW_EXPERIMENTAL_PROFILES=true to opt in explicitly."
                 )
             _LOG.warning(
-                "Experimental device profile selected profile=%s "
+                "%s device profile selected profile=%s "
                 "confidence=%s fixture_verified=%s hardware_verified=%s",
+                lifecycle.value.capitalize(),
                 profile.profile_id,
                 profile.evidence.confidence.value,
                 profile.evidence.fixture_verified,
@@ -225,6 +269,33 @@ class DeviceProfileRegistry:
             profile_id=profile_id,
             field="description",
         )
+        if type(profile.schema_version) is not int or (
+            profile.schema_version != PROFILE_SCHEMA_VERSION
+        ):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'schema_version' must be "
+                f"{PROFILE_SCHEMA_VERSION}; got {profile.schema_version!r}."
+            )
+        _required_string(
+            profile.manufacturer,
+            profile_id=profile_id,
+            field="manufacturer",
+        )
+        _required_string(
+            profile.category,
+            profile_id=profile_id,
+            field="category",
+        )
+        if not isinstance(
+            profile.confirmation_capability,
+            PhysicalConfirmationCapability,
+        ):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field 'confirmation_capability' must "
+                "be a PhysicalConfirmationCapability value."
+            )
+        _validate_profile_sequences(profile_id, profile)
+        _validate_secondary_channels(profile_id, profile)
 
         if profile.is_generic:
             if profile.lifecycle is not None or profile.evidence is not None:
@@ -288,6 +359,7 @@ class DeviceProfileRegistry:
 
         for index, source in enumerate(evidence.sources):
             _validate_evidence_source(profile_id, index, source)
+        _validate_evidence_claims(profile_id, evidence)
 
         reviewed = _required_string(
             evidence.last_reviewed,
@@ -390,6 +462,16 @@ def _validate_evidence_source(
         profile_id=profile_id,
         field=f"{field}.title",
     )
+    _required_string(
+        source.source_id,
+        profile_id=profile_id,
+        field=f"{field}.source_id",
+    )
+    _required_string(
+        source.locator,
+        profile_id=profile_id,
+        field=f"{field}.locator",
+    )
     if source.sha256 is not None:
         if not isinstance(source.sha256, str) or not _SHA256_RE.fullmatch(
             source.sha256
@@ -398,6 +480,138 @@ def _validate_evidence_source(
                 f"Profile '{profile_id}' field '{field}.sha256' must be a "
                 "64-character lowercase hexadecimal SHA-256 value."
             )
+
+
+def _validate_evidence_claims(
+    profile_id: str,
+    evidence: ProfileEvidence,
+) -> None:
+    if not isinstance(evidence.claims, tuple) or not evidence.claims:
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field 'evidence.claims' must be a "
+            "non-empty tuple of EvidenceClaim records."
+        )
+
+    source_ids = {source.source_id for source in evidence.sources}
+    claim_ids: set[str] = set()
+    for index, claim in enumerate(evidence.claims):
+        field = f"evidence.claims[{index}]"
+        if not isinstance(claim, EvidenceClaim):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}' must be an "
+                "EvidenceClaim record."
+            )
+        claim_id = _required_string(
+            claim.claim_id,
+            profile_id=profile_id,
+            field=f"{field}.claim_id",
+        )
+        if claim_id in claim_ids:
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.claim_id' duplicates "
+                f"claim '{claim_id}'."
+            )
+        claim_ids.add(claim_id)
+        _required_string(
+            claim.statement,
+            profile_id=profile_id,
+            field=f"{field}.statement",
+        )
+        if not isinstance(claim.confidence, EvidenceConfidence):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.confidence' must be "
+                "an EvidenceConfidence value."
+            )
+        if not isinstance(claim.source_ids, tuple) or not claim.source_ids:
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.source_ids' must be a "
+                "non-empty tuple."
+            )
+        for source_id in claim.source_ids:
+            _required_string(
+                source_id,
+                profile_id=profile_id,
+                field=f"{field}.source_ids",
+            )
+            if source_id not in source_ids:
+                raise ProfileRegistrationError(
+                    f"Profile '{profile_id}' field '{field}.source_ids' "
+                    f"references unknown source '{source_id}'."
+                )
+        _validate_boolean(
+            claim.fixture_verified,
+            profile_id=profile_id,
+            field=f"{field}.fixture_verified",
+        )
+        _validate_boolean(
+            claim.hardware_verified,
+            profile_id=profile_id,
+            field=f"{field}.hardware_verified",
+        )
+
+
+def _validate_profile_sequences(
+    profile_id: str,
+    profile: DeviceProfile,
+) -> None:
+    if not isinstance(profile.command_sequences, tuple):
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field 'command_sequences' must be a tuple."
+        )
+    for index, sequence in enumerate(profile.command_sequences):
+        field = f"command_sequences[{index}]"
+        if not isinstance(sequence, CommandSequence):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}' must be a "
+                "CommandSequence."
+            )
+        _required_string(
+            sequence.name,
+            profile_id=profile_id,
+            field=f"{field}.name",
+        )
+        if (
+            not isinstance(sequence.commands, tuple)
+            or not sequence.commands
+            or len(sequence.commands) > MAX_SEQUENCE_STEPS
+            or any(not isinstance(command, Command) for command in sequence.commands)
+        ):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.commands' must contain "
+                f"1 to {MAX_SEQUENCE_STEPS} Command values."
+            )
+        _validate_boolean(
+            sequence.repeatable,
+            profile_id=profile_id,
+            field=f"{field}.repeatable",
+        )
+
+
+def _validate_secondary_channels(
+    profile_id: str,
+    profile: DeviceProfile,
+) -> None:
+    if not isinstance(profile.secondary_channels, tuple):
+        raise ProfileRegistrationError(
+            f"Profile '{profile_id}' field 'secondary_channels' must be a tuple."
+        )
+    for index, channel in enumerate(profile.secondary_channels):
+        field = f"secondary_channels[{index}]"
+        if not isinstance(channel, SecondaryChannel):
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}' must be a "
+                "SecondaryChannel."
+            )
+        if type(channel.offset) is not int or not -15 <= channel.offset <= 15:
+            raise ProfileRegistrationError(
+                f"Profile '{profile_id}' field '{field}.offset' must be an "
+                "integer between -15 and 15."
+            )
+        _validate_boolean(
+            channel.enabled_by_default,
+            profile_id=profile_id,
+            field=f"{field}.enabled_by_default",
+        )
 
 
 ON_OFF = frozenset({Command.ON, Command.OFF})
@@ -413,7 +627,10 @@ GENERIC_SWITCH = DeviceProfile(
     capabilities=frozenset({DeviceCapability.ON_OFF}),
     supported_commands=ON_OFF,
     stateful=True,
+    manufacturer="Generic",
+    category="switch",
     is_generic=True,
+    confirmation_capability=PhysicalConfirmationCapability.UNSUPPORTED,
 )
 
 GENERIC_LIGHT = DeviceProfile(
@@ -424,9 +641,12 @@ GENERIC_LIGHT = DeviceProfile(
     capabilities=frozenset({DeviceCapability.ON_OFF, DeviceCapability.DIM}),
     supported_commands=LIGHT_COMMANDS,
     stateful=True,
+    manufacturer="Generic",
+    category="light",
     is_generic=True,
     all_lights_on_response=True,
     all_lights_off_response=True,
+    confirmation_capability=PhysicalConfirmationCapability.UNSUPPORTED,
 )
 
 SC546A_CHIME = DeviceProfile(
@@ -440,6 +660,8 @@ SC546A_CHIME = DeviceProfile(
     capabilities=frozenset({DeviceCapability.ACTION}),
     supported_commands=ON_ONLY,
     stateful=False,
+    manufacturer="X10",
+    category="chime",
     lifecycle=ProfileLifecycle.EXPERIMENTAL,
     evidence=ProfileEvidence(
         confidence=EvidenceConfidence.WELL_SUPPORTED,
@@ -451,6 +673,8 @@ SC546A_CHIME = DeviceProfile(
                 ),
                 source_type="manufacturer_manual",
                 title="Remote Chime, Model SC546A (SC546A-6/13)",
+                source_id="sc546a_manual",
+                locator="Operating Instructions",
                 sha256=(
                     "84edf836c1ca3dc174c5703cb458f599f"
                     "b4ab8f20db3f458aeedde1af77d9645"
@@ -465,10 +689,24 @@ SC546A_CHIME = DeviceProfile(
             "Manual confirms SC546A chime identity and TM751 path. OFF and "
             "rapid repeated-ON physical behavior remain unverified."
         ),
+        claims=(
+            EvidenceClaim(
+                claim_id="action_only_on",
+                statement=(
+                    "The profile exposes ON as a repeatable action and does "
+                    "not retain device state."
+                ),
+                confidence=EvidenceConfidence.WELL_SUPPORTED,
+                source_ids=("sc546a_manual",),
+                fixture_verified=True,
+                hardware_verified=False,
+            ),
+        ),
     ),
     repeatable_actions=ON_ONLY,
     all_units_off_response=False,
     operation_mode=OperationMode.ACTION,
+    confirmation_capability=PhysicalConfirmationCapability.UNAVAILABLE,
 )
 
 
@@ -585,3 +823,210 @@ def configured_profile_diagnostics(
             }
         )
     return diagnostics
+
+
+def global_command_response(
+    profile: DeviceProfile,
+    command: Command,
+) -> GlobalCommandResponse:
+    """Return explicit state reconciliation behavior for a global command."""
+
+    if command is Command.ALL_LIGHTS_ON:
+        return (
+            GlobalCommandResponse.SET_ON
+            if profile.all_lights_on_response
+            else GlobalCommandResponse.IGNORE
+        )
+    if command is Command.ALL_LIGHTS_OFF:
+        return (
+            GlobalCommandResponse.SET_OFF
+            if profile.all_lights_off_response
+            else GlobalCommandResponse.IGNORE
+        )
+    if command is Command.ALL_UNITS_OFF:
+        return (
+            GlobalCommandResponse.SET_OFF
+            if profile.all_units_off_response
+            else GlobalCommandResponse.IGNORE
+        )
+    raise ValueError(f"{command.name} is not a global X10 command.")
+
+
+def profile_schema_payload(profile: DeviceProfile) -> dict[str, object]:
+    """Return the deterministic schema-v2 representation of one profile."""
+
+    evidence = None
+    if profile.evidence is not None:
+        evidence = {
+            "confidence": profile.evidence.confidence.value,
+            "sources": [
+                {
+                    "source_id": source.source_id,
+                    "reference": source.reference,
+                    "source_type": source.source_type,
+                    "title": source.title,
+                    "locator": source.locator,
+                    "sha256": source.sha256,
+                }
+                for source in profile.evidence.sources
+            ],
+            "claims": [
+                {
+                    "claim_id": claim.claim_id,
+                    "statement": claim.statement,
+                    "confidence": claim.confidence.value,
+                    "source_ids": list(claim.source_ids),
+                    "fixture_verified": claim.fixture_verified,
+                    "hardware_verified": claim.hardware_verified,
+                }
+                for claim in profile.evidence.claims
+            ],
+            "fixture_verified": profile.evidence.fixture_verified,
+            "hardware_verified": profile.evidence.hardware_verified,
+            "last_reviewed": profile.evidence.last_reviewed,
+            "reviewed_by": profile.evidence.reviewed_by,
+            "notes": profile.evidence.notes,
+        }
+
+    return {
+        "schema_version": PROFILE_SCHEMA_VERSION,
+        "profile_id": profile.profile_id,
+        "identity": {
+            "manufacturer": profile.manufacturer,
+            "model": profile.model,
+            "category": profile.category,
+        },
+        "description": profile.description,
+        "lifecycle": (
+            None if profile.lifecycle is None else profile.lifecycle.value
+        ),
+        "evidence": evidence,
+        "physical_capabilities": sorted(
+            capability.name.lower() for capability in profile.capabilities
+        ),
+        "command_capabilities": {
+            "supported": sorted(
+                command.name for command in profile.supported_commands
+            ),
+            "repeatable": sorted(
+                command.name for command in profile.repeatable_actions
+            ),
+        },
+        "state_policy": {
+            "kind": "stateful" if profile.stateful else "action_only",
+            "operation": profile.operation_mode.name.lower(),
+            "confirmation": profile.confirmation_capability.value,
+        },
+        "home_assistant": {
+            "entity_type": profile.entity_type.name.lower(),
+        },
+        "global_commands": {
+            command.name: global_command_response(profile, command).value
+            for command in (
+                Command.ALL_LIGHTS_ON,
+                Command.ALL_LIGHTS_OFF,
+                Command.ALL_UNITS_OFF,
+            )
+        },
+        "addressing": {
+            "method": "learned" if profile.learned_addressing else "fixed",
+            "secondary_channels": [
+                {
+                    "kind": channel.kind.name.lower(),
+                    "offset": channel.offset,
+                    "description": channel.description,
+                    "enabled_by_default": channel.enabled_by_default,
+                }
+                for channel in profile.secondary_channels
+            ],
+            "exclusive_groups": sorted(profile.exclusive_groups),
+            "rf_identity": profile.rf_identity.name.lower(),
+        },
+        "sequence_policy": {
+            "executable": False,
+            "maximum_steps": MAX_SEQUENCE_STEPS,
+        },
+        "sequences": [
+            {
+                "name": sequence.name,
+                "commands": [command.name for command in sequence.commands],
+                "repeatable": sequence.repeatable,
+                "description": sequence.description,
+            }
+            for sequence in profile.command_sequences
+        ],
+    }
+
+
+def generated_supported_profiles_markdown() -> str:
+    """Generate the user-facing profile catalog from registered profiles."""
+
+    generic = sorted(
+        (
+            profile
+            for profile in PROFILE_REGISTRY._profiles.values()
+            if profile.is_generic
+        ),
+        key=lambda item: item.profile_id,
+    )
+    named = sorted(
+        (
+            profile
+            for profile in PROFILE_REGISTRY._profiles.values()
+            if profile.lifecycle
+            in {
+                ProfileLifecycle.EXPERIMENTAL,
+                ProfileLifecycle.CANDIDATE,
+                ProfileLifecycle.VERIFIED,
+            }
+        ),
+        key=lambda item: item.profile_id,
+    )
+    lines = [
+        "# Supported Device Profiles",
+        "",
+        "Generated from the validated profile schema. Do not edit by hand.",
+        "",
+        "## Generic Capability Profiles",
+        "",
+        "| Profile | Category | Entity | Commands | State policy |",
+        "|---|---|---|---|---|",
+    ]
+    lines.extend(_profile_markdown_row(profile) for profile in generic)
+    lines.extend(
+        [
+            "",
+            "## Named Hardware Profiles",
+            "",
+            "Experimental and candidate profiles require explicit opt-in.",
+            "",
+            "| Profile | Lifecycle | Model | Entity | Evidence |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    lines.extend(
+        "| `{}` | {} | {} | {} | fixture={}, hardware={} |".format(
+            profile.profile_id,
+            profile.lifecycle.value,
+            profile.model,
+            profile.entity_type.name.lower(),
+            str(profile.evidence.fixture_verified).lower(),
+            str(profile.evidence.hardware_verified).lower(),
+        )
+        for profile in named
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _profile_markdown_row(profile: DeviceProfile) -> str:
+    commands = ", ".join(
+        command.name for command in sorted(
+            profile.supported_commands,
+            key=lambda item: item.name,
+        )
+    )
+    state_policy = "stateful" if profile.stateful else "action-only"
+    return (
+        f"| `{profile.profile_id}` | {profile.category} | "
+        f"{profile.entity_type.name.lower()} | {commands} | {state_policy} |"
+    )
