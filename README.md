@@ -172,6 +172,7 @@ the checks attached to the exact tested commit.
 - [Capability-driven device registry](docs/capability-device-registry.md)
 - [Generated supported-profile catalog](docs/supported-profiles.md)
 - [Named-profile migration](docs/device-profile-migration.md)
+- [Configuration backup and isolated restore](docs/backup-and-restore.md)
 - [Compatibility](docs/compatibility.md)
 - [Future mochad JSON API](docs/future-mochad-json-api.md)
 - [Release engineering](docs/release-engineering.md)

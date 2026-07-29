@@ -11,6 +11,9 @@ This project follows semantic versioning once releases begin.
 - Device-profile schema v2 with typed per-claim evidence, explicit v1
   configuration migration, candidate lifecycle gating, bounded declarative
   sequences, and a generated supported-profile catalog.
+- Offline, manifest-based backup and isolated restore for bridge-owned
+  configuration, with dry-run planning, checksum validation, atomic activation,
+  rollback, and secret rejection.
 
 ### Fixed
 
