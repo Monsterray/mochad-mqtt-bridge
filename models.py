@@ -137,6 +137,39 @@ class BridgeCommand(Enum):
     PING = auto()
 
 
+class StateConfidence(str, Enum):
+    """Why the bridge currently believes a device state."""
+
+    UNKNOWN = "unknown"
+    ASSUMED = "assumed"
+    INFERRED = "inferred"
+    REPORTED = "reported"
+    OBSERVED = "observed"
+
+
+class StateProvenance(str, Enum):
+    """Source used to derive the current device state."""
+
+    UNKNOWN = "unknown"
+    MQTT_COMMAND = "mqtt_command"
+    PROFILE_INFERENCE = "profile_inference"
+    DEVICE_EVENT = "device_event"
+    STATUS_SYNC = "status_sync"
+    TRANSMITTED_EVENT = "transmitted_event"
+    INDEPENDENT_RETURN = "independent_return"
+
+
+class PhysicalConfirmation(str, Enum):
+    """Independent physical observation of the current device outcome."""
+
+    UNKNOWN = "unknown"
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+    NOT_OBSERVED = "not_observed"
+    OBSERVED = "observed"
+    CONTRADICTED = "contradicted"
+
+
 ###############################################################################
 # Configuration
 ###############################################################################
@@ -295,6 +328,28 @@ class DeviceState:
     discovered: bool = False
 
     available: bool = False
+
+    confidence: StateConfidence = StateConfidence.UNKNOWN
+
+    provenance: StateProvenance = StateProvenance.UNKNOWN
+
+    updated_at: datetime | None = None
+
+    observed_at: datetime | None = None
+
+    expires_at: datetime | None = None
+
+    stale: bool = False
+
+    physical_confirmation: PhysicalConfirmation = PhysicalConfirmation.UNKNOWN
+
+    last_command_sent: Command | None = None
+
+    @property
+    def value(self) -> Command | None:
+        """Backward-compatible state value alias."""
+
+        return self.current_state
 
 
 ###############################################################################

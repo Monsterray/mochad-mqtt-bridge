@@ -175,6 +175,7 @@ the checks attached to the exact tested commit.
 - [Named-profile migration](docs/device-profile-migration.md)
 - [Sanitized support bundles](docs/support-bundles.md)
 - [Configuration backup and isolated restore](docs/backup-and-restore.md)
+- [State confidence and provenance](docs/state-evidence.md)
 - [Compatibility](docs/compatibility.md)
 - [Future mochad JSON API](docs/future-mochad-json-api.md)
 - [Release engineering](docs/release-engineering.md)

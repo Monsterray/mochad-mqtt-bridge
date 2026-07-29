@@ -10,7 +10,7 @@ or environment variables.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Iterable
 
@@ -21,8 +21,10 @@ from models import (
     DeviceConfig,
     DeviceEvent,
     DeviceState,
+    Direction,
     HouseEvent,
     LogUnknownEventAction,
+    PhysicalConfirmation,
     PublishAttributesAction,
     PublishAvailabilityAction,
     PublishCommandEventAction,
@@ -32,6 +34,8 @@ from models import (
     PublishStatusAction,
     RequestStatusAction,
     SendDeviceCommandAction,
+    StateConfidence,
+    StateProvenance,
     StatusSnapshot,
     UnknownEvent,
 )
@@ -68,6 +72,7 @@ class StateManager:
         devices: Iterable[DeviceConfig] | dict[str, DeviceConfig] | None = None,
         optimistic_updates: bool = True,
         allowed_housecodes: Iterable[str] | None = None,
+        stale_after: timedelta | None = None,
     ) -> None:
         self._lock = RLock()
         self._devices: dict[str, DeviceState] = {}
@@ -79,6 +84,7 @@ class StateManager:
         self._available = False
         self._mqtt_generation = 0
         self._optimistic_updates = optimistic_updates
+        self._stale_after = stale_after
         self._allowed_housecodes = self._normalize_housecodes(
             allowed_housecodes
         )
@@ -139,6 +145,7 @@ class StateManager:
                 return []
 
             state.pending_command = command
+            state.last_command_sent = command
             self._statistics.commands_sent += 1
 
             actions = self._discovery_actions(state)
@@ -170,17 +177,6 @@ class StateManager:
                 )
                 return actions
 
-            actions.append(
-                PublishAttributesAction(
-                    address=state.address,
-                    payload={
-                        "last_command_sent": command.name,
-                        "optimistic": self._optimistic_updates,
-                    },
-                    retain=True,
-                )
-            )
-
             if self._optimistic_updates:
                 actions.extend(
                     self._set_device_state(
@@ -189,8 +185,12 @@ class StateManager:
                         now=self._now(),
                         retain=True,
                         clear_pending=False,
+                        confidence=StateConfidence.ASSUMED,
+                        provenance=StateProvenance.MQTT_COMMAND,
                     )
                 )
+            else:
+                actions.append(self._attributes_action(state))
 
             return actions
 
@@ -224,6 +224,7 @@ class StateManager:
                             retain=True,
                         )
                     )
+                    actions.append(self._attributes_action(state))
 
             return actions
 
@@ -254,6 +255,7 @@ class StateManager:
 
     def snapshot(self) -> dict[str, DeviceState]:
         with self._lock:
+            self._refresh_staleness(self._now())
             return deepcopy(self._devices)
 
     def statistics(self) -> BridgeStatistics:
@@ -292,6 +294,28 @@ class StateManager:
         if not device.stateful or event.command not in STATE_COMMANDS:
             return actions
 
+        if event.direction is Direction.RX:
+            confidence = StateConfidence.REPORTED
+            provenance = StateProvenance.DEVICE_EVENT
+            observed_at = event.timestamp
+        else:
+            # A Tx echo is transport evidence, not a device state report.
+            same_value = (
+                state.current_state
+                == self._authoritative_state(event.command)
+            )
+            confidence = (
+                state.confidence
+                if same_value
+                else StateConfidence.UNKNOWN
+            )
+            provenance = (
+                state.provenance
+                if same_value
+                else StateProvenance.TRANSMITTED_EVENT
+            )
+            observed_at = state.observed_at if same_value else None
+
         actions.extend(
             self._set_device_state(
                 state=state,
@@ -299,6 +323,9 @@ class StateManager:
                 now=event.timestamp,
                 retain=True,
                 clear_pending=True,
+                confidence=confidence,
+                provenance=provenance,
+                observed_at=observed_at,
             )
         )
 
@@ -344,6 +371,22 @@ class StateManager:
             else:
                 command = Command.ON
 
+            if event.direction is Direction.RX:
+                confidence = StateConfidence.INFERRED
+                provenance = StateProvenance.PROFILE_INFERENCE
+            else:
+                same_value = state.current_state is command
+                confidence = (
+                    state.confidence
+                    if same_value
+                    else StateConfidence.UNKNOWN
+                )
+                provenance = (
+                    state.provenance
+                    if same_value
+                    else StateProvenance.TRANSMITTED_EVENT
+                )
+
             actions.extend(
                 self._set_device_state(
                     state=state,
@@ -351,6 +394,8 @@ class StateManager:
                     now=event.timestamp,
                     retain=True,
                     clear_pending=True,
+                    confidence=confidence,
+                    provenance=provenance,
                 )
             )
 
@@ -400,6 +445,8 @@ class StateManager:
                     now=now,
                     retain=True,
                     clear_pending=True,
+                    confidence=StateConfidence.INFERRED,
+                    provenance=StateProvenance.STATUS_SYNC,
                 )
             )
 
@@ -412,14 +459,53 @@ class StateManager:
         now: datetime,
         retain: bool,
         clear_pending: bool,
+        confidence: StateConfidence,
+        provenance: StateProvenance,
+        observed_at: datetime | None = None,
     ) -> list[BridgeAction]:
         command = self._authoritative_state(command)
+        value_changed = state.current_state != command
+        previous_evidence = (
+            state.confidence,
+            state.provenance,
+            state.updated_at,
+            state.observed_at,
+            state.expires_at,
+            state.stale,
+        )
 
-        if state.current_state == command:
+        state.confidence = confidence
+        state.provenance = provenance
+        state.updated_at = now
+        state.observed_at = observed_at
+        state.expires_at = (
+            now + self._stale_after
+            if self._stale_after is not None
+            else None
+        )
+        state.stale = False
+        if value_changed and state.physical_confirmation in {
+            PhysicalConfirmation.NOT_OBSERVED,
+            PhysicalConfirmation.OBSERVED,
+            PhysicalConfirmation.CONTRADICTED,
+        }:
+            state.physical_confirmation = PhysicalConfirmation.UNKNOWN
+
+        if not value_changed:
             self._statistics.duplicates += 1
             state.last_seen = now
             if clear_pending:
                 self._clear_confirmed_pending(state, command)
+            current_evidence = (
+                state.confidence,
+                state.provenance,
+                state.updated_at,
+                state.observed_at,
+                state.expires_at,
+                state.stale,
+            )
+            if current_evidence != previous_evidence:
+                return [self._attributes_action(state)]
             return []
 
         state.previous_state = state.current_state
@@ -435,8 +521,43 @@ class StateManager:
                 address=state.address,
                 state=command,
                 retain=retain,
-            )
+            ),
+            self._attributes_action(state),
         ]
+
+    def _attributes_action(
+        self,
+        state: DeviceState,
+    ) -> PublishAttributesAction:
+        return PublishAttributesAction(
+            address=state.address,
+            payload={
+                "last_command_sent": (
+                    state.last_command_sent.name
+                    if state.last_command_sent is not None
+                    else None
+                ),
+                "optimistic": self._optimistic_updates,
+                "state": (
+                    state.current_state.name
+                    if state.current_state is not None
+                    else None
+                ),
+                "confidence": state.confidence.value,
+                "provenance": state.provenance.value,
+                "updated_at": self._isoformat(state.updated_at),
+                "observed_at": self._isoformat(state.observed_at),
+                "expires_at": self._isoformat(state.expires_at),
+                "stale": state.stale,
+                "physical_confirmation": state.physical_confirmation.value,
+            },
+            retain=True,
+        )
+
+    def _refresh_staleness(self, now: datetime) -> None:
+        for state in self._devices.values():
+            if state.expires_at is not None and now >= state.expires_at:
+                state.stale = True
 
     def _discovery_actions(
         self,
@@ -550,6 +671,10 @@ class StateManager:
             return Command.OFF
 
         return command
+
+    @staticmethod
+    def _isoformat(value: datetime | None) -> str | None:
+        return value.isoformat() if value is not None else None
 
     @staticmethod
     def _now() -> datetime:

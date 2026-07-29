@@ -18,6 +18,9 @@ This project follows semantic versioning once releases begin.
 - Offline, manifest-based backup and isolated restore for bridge-owned
   configuration, with dry-run planning, checksum validation, atomic activation,
   rollback, and secret rejection.
+- Retained state attributes now distinguish confidence, provenance, staleness,
+  and physical confirmation without treating transport completion as device
+  activation.
 
 ### Fixed
 

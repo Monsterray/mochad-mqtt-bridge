@@ -163,6 +163,11 @@ class DiscoveryManager:
                 base_topic=self.base_topic,
                 friendly_topics=self.friendly_topics,
             ),
+            "json_attributes_topic": Topics.attributes(
+                device,
+                base_topic=self.base_topic,
+                friendly_topics=self.friendly_topics,
+            ),
             "availability_topic": Topics.availability(
                 base_topic=self.base_topic,
             ),
