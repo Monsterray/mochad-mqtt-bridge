@@ -31,6 +31,26 @@ docker compose exec mochad-mqtt-bridge python /app/tools/mochad_status.py --host
 docker compose exec mochad-mqtt-bridge python /app/tools/watch_mochad.py --host mochad --port 1099
 ```
 
+## Back up and validate bridge configuration
+
+The offline backup tool includes only `bridge.json` and the optional
+`discovery_registry.json`. Restore defaults to a non-writing dry run and must
+target an isolated root:
+
+```sh
+python /app/tools/config_backup_restore.py backup \
+  --config-root /config \
+  --output /tmp/mochad-bridge.tar.gz \
+  --installation-method docker
+
+python /app/tools/config_backup_restore.py restore \
+  /tmp/mochad-bridge.tar.gz \
+  --target-root /tmp/mochad-bridge-restore
+```
+
+See [backup and restore](../docs/backup-and-restore.md) for the apply and
+overwrite workflow. The archive is unsanitized and must be kept private.
+
 ## Clean Home Assistant MQTT discovery
 
 Dry-run first:

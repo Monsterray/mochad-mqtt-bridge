@@ -15,6 +15,9 @@ This project follows semantic versioning once releases begin.
   until physical hardware results are recorded and approved.
 - A local sanitized support-bundle collector with bounded inputs,
   deterministic pseudonyms, file checksums, and fail-closed archive scanning.
+- Offline, manifest-based backup and isolated restore for bridge-owned
+  configuration, with dry-run planning, checksum validation, atomic activation,
+  rollback, and secret rejection.
 
 ### Fixed
 
