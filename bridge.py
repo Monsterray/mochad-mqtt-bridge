@@ -36,6 +36,7 @@ from models import (
     DiscoveryMessage,
     LogUnknownEventAction,
     MochadDiagnostics,
+    PhysicalConfirmation,
     PublishAttributesAction,
     PublishAvailabilityAction,
     PublishBridgeResponseAction,
@@ -47,6 +48,7 @@ from models import (
     RequestStatusAction,
     SendDeviceCommandAction,
     SendMochadCommandAction,
+    StateConfidence,
 )
 from mochad_client import MochadClient
 from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
@@ -1452,6 +1454,23 @@ class Bridge:
             ),
             "configured_devices": len(self.devices),
             "known_devices": len(snapshot),
+            "state_evidence": {
+                "confidence": {
+                    confidence.value: sum(
+                        state.confidence is confidence
+                        for state in snapshot.values()
+                    )
+                    for confidence in StateConfidence
+                },
+                "stale": sum(state.stale for state in snapshot.values()),
+                "physical_confirmation": {
+                    confirmation.value: sum(
+                        state.physical_confirmation is confirmation
+                        for state in snapshot.values()
+                    )
+                    for confirmation in PhysicalConfirmation
+                },
+            },
             "dropped_mqtt_publishes": getattr(
                 self,
                 "_dropped_mqtt_publishes",

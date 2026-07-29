@@ -11,6 +11,9 @@ This project follows semantic versioning once releases begin.
 - Device-profile schema v2 with typed per-claim evidence, explicit v1
   configuration migration, candidate lifecycle gating, bounded declarative
   sequences, and a generated supported-profile catalog.
+- Retained state attributes now distinguish confidence, provenance, staleness,
+  and physical confirmation without treating transport completion as device
+  activation.
 
 ### Fixed
 
