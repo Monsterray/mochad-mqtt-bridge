@@ -13,6 +13,8 @@ This project follows semantic versioning once releases begin.
   sequences, and a generated supported-profile catalog.
 - Formal SC546A evidence and promotion review, retaining experimental status
   until physical hardware results are recorded and approved.
+- A local sanitized support-bundle collector with bounded inputs,
+  deterministic pseudonyms, file checksums, and fail-closed archive scanning.
 
 ### Fixed
 

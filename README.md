@@ -173,6 +173,7 @@ the checks attached to the exact tested commit.
 - [SC546A promotion evaluation](docs/sc546a-promotion-evaluation.md)
 - [Generated supported-profile catalog](docs/supported-profiles.md)
 - [Named-profile migration](docs/device-profile-migration.md)
+- [Sanitized support bundles](docs/support-bundles.md)
 - [Compatibility](docs/compatibility.md)
 - [Future mochad JSON API](docs/future-mochad-json-api.md)
 - [Release engineering](docs/release-engineering.md)
