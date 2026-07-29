@@ -627,6 +627,33 @@ class DeviceProfileConfigTests(unittest.TestCase):
 
 
 class Sc546aBehaviorTests(unittest.TestCase):
+    def test_promotion_fixture_matches_registered_evidence(self):
+        fixture = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures/device_profiles/sc546a_promotion_evaluation.json"
+            ).read_text(encoding="utf-8")
+        )
+        profile = get_profile("sc546a_chime")
+
+        self.assertEqual(fixture["profile_id"], profile.profile_id)
+        self.assertEqual(fixture["lifecycle"], profile.lifecycle.value)
+        self.assertEqual(fixture["confidence"], profile.evidence.confidence.value)
+        self.assertEqual(
+            fixture["fixture_verified"], profile.evidence.fixture_verified
+        )
+        self.assertEqual(
+            fixture["hardware_verified"], profile.evidence.hardware_verified
+        )
+        self.assertEqual(
+            fixture["manual"]["sha256"], profile.evidence.sources[0].sha256
+        )
+        self.assertEqual(
+            fixture["software_expectations"]["supported_commands"],
+            sorted(command.name for command in profile.supported_commands),
+        )
+        self.assertEqual(fixture["decision"], "remain_experimental")
+
     def test_sc546a_remains_action_only_and_unconfirmed(self):
         device = apply_profile(
             DeviceConfig("A2", "Door Chime"),

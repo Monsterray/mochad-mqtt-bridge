@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "profile_id": "sc546a_chime",
+  "decision": "remain_experimental",
+  "lifecycle": "experimental",
+  "confidence": "well_supported",
+  "fixture_verified": true,
+  "hardware_verified": false,
+  "manual": {
+    "model": "SC546A",
+    "revision": "SC546A-6/13",
+    "locator": "PDF page 1, Installation and Operating Instructions",
+    "sha256": "84edf836c1ca3dc174c5703cb458f599fb4ab8f20db3f458aeedde1af77d9645"
+  },
+  "software_expectations": {
+    "home_assistant_entity": "button",
+    "supported_commands": [
+      "ON"
+    ],
+    "repeatable_commands": [
+      "ON"
+    ],
+    "retained_state": false,
+    "physical_confirmation": false
+  },
+  "physical_checks": [
+    {
+      "id": "matching_on",
+      "command": "rf D1 on",
+      "observation": "HARDWARE REQUIRED"
+    },
+    {
+      "id": "repeated_on",
+      "command": "rf D1 on twice",
+      "observation": "HARDWARE REQUIRED"
+    },
+    {
+      "id": "off",
+      "command": "rf D1 off",
+      "observation": "HARDWARE REQUIRED"
+    },
+    {
+      "id": "wrong_unit",
+      "command": "rf D2 on while SC546A is D1",
+      "observation": "HARDWARE REQUIRED"
+    },
+    {
+      "id": "wrong_house",
+      "command": "rf D1 on while SC546A is E1",
+      "observation": "HARDWARE REQUIRED"
+    }
+  ]
+}
