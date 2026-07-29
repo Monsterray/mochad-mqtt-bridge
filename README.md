@@ -170,6 +170,7 @@ the checks attached to the exact tested commit.
 - [Configuration reference](docs/configuration.md)
 - [MQTT topics and bridge controls](docs/mqtt-topics.md)
 - [Capability-driven device registry](docs/capability-device-registry.md)
+- [SC546A promotion evaluation](docs/sc546a-promotion-evaluation.md)
 - [Generated supported-profile catalog](docs/supported-profiles.md)
 - [Named-profile migration](docs/device-profile-migration.md)
 - [Compatibility](docs/compatibility.md)
