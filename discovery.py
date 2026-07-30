@@ -138,6 +138,16 @@ class DiscoveryManager:
 
         return messages
 
+    def obsolete_bridge_discovery_topics(self) -> set[str]:
+        """Return retained bridge entities that must be removed."""
+        return {
+            Topics.bridge_discovery(
+                "button",
+                "mqtt_mochad_bridge_prune_entities",
+                discovery_prefix=self.discovery_prefix,
+            )
+        }
+
     def _payload(
         self,
         device: DeviceConfig,

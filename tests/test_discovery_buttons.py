@@ -77,6 +77,20 @@ class DiscoveryButtonTests(unittest.TestCase):
         self.assertIn("PRUNE_DISCOVERY", button_payloads)
         self.assertIn("RESET_DISCOVERY", button_payloads)
 
+    def test_obsolete_prune_button_topic_is_identified_for_cleanup(self):
+        manager = DiscoveryManager(
+            discovery_prefix="homeassistant",
+            base_topic="x10",
+        )
+
+        self.assertEqual(
+            manager.obsolete_bridge_discovery_topics(),
+            {
+                "homeassistant/button/"
+                "mqtt_mochad_bridge_prune_entities/config"
+            },
+        )
+
     def test_bridge_buttons_have_stable_default_entity_ids(self):
         messages = DiscoveryManager(
             discovery_prefix="homeassistant",

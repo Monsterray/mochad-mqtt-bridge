@@ -137,6 +137,46 @@ class BridgeCommandParsingTests(unittest.TestCase):
 
 
 class BridgeDiscoveryPruneTests(unittest.TestCase):
+    def test_obsolete_prune_button_is_cleared_without_general_cleanup(self):
+        for tracked in (False, True):
+            with self.subTest(tracked=tracked):
+                with tempfile.TemporaryDirectory() as directory:
+                    registry_path = f"{directory}/discovery_registry.json"
+                    obsolete_topic = (
+                        "homeassistant/button/"
+                        "mqtt_mochad_bridge_prune_entities/config"
+                    )
+                    unrelated_stale_topic = (
+                        "homeassistant/switch/x10_A2/config"
+                    )
+                    registry = DiscoveryRegistry(registry_path)
+                    registry.save(
+                        {unrelated_stale_topic}
+                        | ({obsolete_topic} if tracked else set())
+                    )
+                    mqtt = FakeMqttClient()
+                    bridge = Bridge(
+                        minimal_config(),
+                        mqtt_client=mqtt,
+                        mochad_client=FakeMochadClient(),
+                    )
+                    bridge.discovery_registry = registry
+
+                    result = bridge._run_discovery_cleanup(force=False)
+
+                    self.assertTrue(result["success"])
+                    self.assertEqual(result["obsolete"], 1)
+                    self.assertIn(
+                        obsolete_topic,
+                        {
+                            message.topic
+                            for message in mqtt.discovery_messages
+                            if message.payload == "" and message.retain
+                        },
+                    )
+                    self.assertNotIn(obsolete_topic, registry.load())
+                    self.assertIn(unrelated_stale_topic, registry.load())
+
     def test_cleanup_disabled_preserves_stale_registry_topics_for_manual_prune(self):
         with tempfile.TemporaryDirectory() as directory:
             registry_path = f"{directory}/discovery_registry.json"
