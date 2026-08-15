@@ -1160,6 +1160,19 @@ class Bridge:
         force: bool,
     ) -> dict:
         desired_topics = self._desired_discovery_topics()
+        obsolete_topics = self.discovery.obsolete_bridge_discovery_topics()
+
+        # Older releases retained a prune button that published to a retired
+        # topic. Tombstone it even when general discovery cleanup is disabled
+        # so Home Assistant cannot keep presenting a control that cannot work.
+        for topic in sorted(obsolete_topics):
+            _LOG.info(
+                "MQTT clear obsolete discovery topic=%s",
+                topic,
+            )
+            self.clients.mqtt.publish_discovery(
+                self._empty_discovery_message(topic)
+            )
 
         if not force and not self.config.discovery_cleanup:
             try:
@@ -1171,6 +1184,7 @@ class Bridge:
                 )
                 previous_topics = set()
 
+            previous_topics -= obsolete_topics
             saved = self._save_discovery_registry(
                 previous_topics | desired_topics
             )
@@ -1187,6 +1201,7 @@ class Bridge:
                 "desired": len(desired_topics),
                 "tracked": len(previous_topics | desired_topics),
                 "stale": len(previous_topics - desired_topics),
+                "obsolete": len(obsolete_topics),
                 "cleanup_enabled": self.config.discovery_cleanup,
             }
 
@@ -1202,9 +1217,11 @@ class Bridge:
                 "message": f"Discovery cleanup skipped: {exc}",
                 "desired": len(desired_topics),
                 "stale": 0,
+                "obsolete": len(obsolete_topics),
                 "cleanup_enabled": self.config.discovery_cleanup,
             }
 
+        previous_topics -= obsolete_topics
         stale_topics = sorted(previous_topics - desired_topics)
 
         for topic in stale_topics:
@@ -1236,6 +1253,7 @@ class Bridge:
             "message": "Discovery cleanup complete.",
             "desired": len(desired_topics),
             "stale": len(stale_topics),
+            "obsolete": len(obsolete_topics),
             "cleanup_enabled": self.config.discovery_cleanup,
         }
 
