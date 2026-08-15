@@ -202,6 +202,73 @@ The release workflow validates image labels, exact dependencies, Compose,
 container runtime behavior, `linux/amd64`, and `linux/arm64`. Physical CM19A
 and module outcomes remain human-approved hardware evidence.
 
+## Windows Development
+
+This repository is pure Python and has by far the best Windows story of the
+three repos in the family. Development and testing run natively on Windows,
+with no WSL required for the core work.
+
+Create a virtual environment and run the source suite:
+
+```text
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv\Scripts\python -m pytest
+```
+
+On Windows 11 with Python 3.12.10, `python -m pytest` produces `177 passed,
+13 failed, 6 skipped`. All 13 failures are Windows platform artifacts, not
+product bugs. Compare local Windows runs against this baseline rather than
+expecting zero failures, and confirm results on Linux or CI before trusting
+them.
+
+- Eight failures come from `tempfile.NamedTemporaryFile` files that cannot be
+  reopened by name while still open on Windows, surfacing as
+  `ConfigError: ... points to an unreadable file ...: [Errno 13] Permission
+  denied`. This affects `test_config.py` and `test_device_registry.py`.
+- Several failures are POSIX file-mode assertions that Windows does not
+  honor, such as `assert 438 == 384` (0o666 vs 0o600) and `assert 438 == 416`
+  (vs 0o640), in `test_config_backup_restore.py` and `test_support_bundle.py`.
+- `test_container_permissions.py` calls `bash -n` on a shell script and fails
+  with exit code 127 when `bash` is not on `PATH`.
+- `test_config_backup_restore.py::test_activation_failure_restores_every_original_file`
+  fails for a subtler reason: its fault injection matches the hardcoded POSIX
+  substring `"/payload/files/config/discovery_registry.json"`, which never
+  matches Windows backslash paths, so the synthetic failure never fires and
+  the expected exception is never raised. This is a test-portability issue,
+  not a product bug.
+- The 6 skips are environmental: `mosquitto` is not installed (integration
+  and lifecycle tests), and `RUN_MQTT_TLS_INTEGRATION=1` is not set.
+
+A few Windows-specific gotchas apply:
+
+1. Clone with CRLF conversion off:
+
+   ```sh
+   git clone -c core.autocrlf=false https://github.com/Monsterray/mochad-mqtt-bridge.git
+   ```
+
+   or run `git config core.autocrlf false` in an existing clone. Otherwise
+   Git rewrites `docker-entrypoint.sh` and the `scripts/validate` shell
+   scripts to CRLF, which breaks them in the container and makes shellcheck
+   emit spurious `SC1017 literal carriage return` errors.
+2. `python3` does not exist on Windows; the command is `python`. Anything
+   invoking `python3` fails with exit code 9009.
+3. `bash` must be on `PATH` for the container-permission tests; Git Bash
+   provides it.
+4. Tests needing `mosquitto` or Docker will skip or fail; use WSL2 or a Linux
+   host for the full integration matrix.
+
+| Task | Where it runs |
+| --- | --- |
+| Edit code | Either |
+| Unit tests | Windows native |
+| MQTT integration tests (needs mosquitto) | WSL2 or Linux |
+| TLS integration tests | WSL2 or Linux |
+| Container permission tests | Either, with `bash` on `PATH` |
+| Docker image build | WSL2 or Linux |
+| shellcheck | Either; on Windows install it with `pip install shellcheck-py` (no `bash` needed) |
+
 ## Related Projects
 
 - [mochad-redux](https://github.com/Monsterray/mochad-redux)
