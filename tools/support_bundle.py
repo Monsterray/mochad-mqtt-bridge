@@ -7,6 +7,7 @@ import argparse
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -18,13 +19,46 @@ import tempfile
 
 SCHEMA_VERSION = 1
 MAX_LOG_LINES = 1000
+
+# Matches an optional run of "WORD_" prefixes glued to the keyword with
+# underscores (e.g. the "MQTT_TLS_KEY_" in MQTT_TLS_KEY_PASSWORD, or the "HA_"
+# in HA_TOKEN). A plain "\b" cannot see this boundary because "_" is itself a
+# word character, so "\bpassword" never matches inside "MQTT_PASSWORD" -- this
+# repo's own credential. The alternative below matches either start-of-string
+# or a genuine non-identifier character before the (optional) prefix runs.
+_PREFIXED_KEYWORD = r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]+_)*"
+
+PRIVATE_KEY_RE = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----", re.IGNORECASE)
+# A trailing "_WORD" run lets SECRET_KEY= and TLS_KEY_PASSWORD= match through
+# the "secret"/"password" keywords. Listing a bare "key" instead would redact
+# ordinary diagnostics such as "primary key: id" or "sort key=timestamp" -- a
+# support bundle has to stay useful as well as safe.
+_KEYWORD_SUFFIX = r"(?:_[A-Za-z0-9]+)*"
+SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)(" + _PREFIXED_KEYWORD +
+    r"(?:password|passwd|token|api[_-]?key|secret)" + _KEYWORD_SUFFIX +
+    r"\s*[:=]\s*)(?!\[REDACTED:)[^\s,;]+"
+)
+# Authorization header values ("Bearer <token>", "Basic <base64>") carry a
+# scheme word before the credential, so -- unlike a plain "KEY=value"
+# assignment -- the value legitimately contains a space. Capture the whole
+# remainder of the value instead of stopping at the first token, or the
+# credential after the scheme word survives untouched.
+AUTHORIZATION_RE = re.compile(
+    r"(?i)(" + _PREFIXED_KEYWORD + r"authorization\s*[:=]\s*)"
+    r"(?!\[REDACTED:)[^\r\n,;]+"
+)
+URL_CREDENTIALS_RE = re.compile(r"(?i)(\bmqtts?://)[^/@\s]+@")
+# High-entropy backstop: a run of 32+ base64/hex-ish characters that slipped
+# past every keyword rule above. This never redacts by itself -- it only
+# fails the bundle build (see _scan_bytes) so a missed secret cannot ship.
+HIGH_ENTROPY_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9_+/=-]{32,}(?![A-Za-z0-9])")
+
 SECRET_RULES = (
-    re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----", re.IGNORECASE),
-    re.compile(
-        r"(?i)\b(password|passwd|token|authorization|api[_-]?key|secret)"
-        r"\s*[:=]\s*(?!\[REDACTED:)[^\s,;]+"
-    ),
-    re.compile(r"(?i)\bmqtts?://[^/\s:@]+:[^@\s]+@"),
+    PRIVATE_KEY_RE,
+    SECRET_ASSIGNMENT_RE,
+    AUTHORIZATION_RE,
+    URL_CREDENTIALS_RE,
 )
 SECRET_NAME_RULE = re.compile(
     r"(^|[._-])(\.env|id_rsa|private|secret|password|token|credentials?|key)"
@@ -33,7 +67,13 @@ SECRET_NAME_RULE = re.compile(
 )
 ADDRESS_RE = re.compile(r"\b[A-P](?:[1-9]|1[0-6])\b")
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-HOME_PATH_RE = re.compile(r"(?:/Users|/home)/[^/\s]+")
+IPV6_CANDIDATE_RE = re.compile(
+    r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
+)
+# Generic absolute-path pattern (matches mochad-redux/mochad-docker) so a
+# username baked into any absolute path -- not just /home or /Users -- is
+# pseudonymised the same way.
+PATH_RE = re.compile(r"(?<![\w.])/(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+")
 
 
 class SupportBundleError(RuntimeError):
@@ -52,17 +92,9 @@ class Redactor:
             value,
             flags=re.IGNORECASE | re.DOTALL,
         )
-        value = re.sub(
-            r"(?i)(\b(?:password|passwd|token|authorization|api[_-]?key|secret)"
-            r"\s*[:=]\s*)[^\s,;]+",
-            r"\1[REDACTED:secret]",
-            value,
-        )
-        value = re.sub(
-            r"(?i)(\bmqtts?://)[^/\s:@]+:[^@\s]+@",
-            r"\1[REDACTED:credentials]@",
-            value,
-        )
+        value = AUTHORIZATION_RE.sub(r"\1[REDACTED:secret]", value)
+        value = SECRET_ASSIGNMENT_RE.sub(r"\1[REDACTED:secret]", value)
+        value = URL_CREDENTIALS_RE.sub(r"\1[REDACTED:credentials]@", value)
         value = ADDRESS_RE.sub(
             lambda match: self._alias("DEVICE", match.group(0)),
             value,
@@ -71,10 +103,21 @@ class Redactor:
             lambda match: self._alias("HOST", match.group(0)),
             value,
         )
-        return HOME_PATH_RE.sub(
+        value = IPV6_CANDIDATE_RE.sub(self._replace_ipv6, value)
+        return PATH_RE.sub(
             lambda match: self._alias("PATH", match.group(0)),
             value,
         )
+
+    def _replace_ipv6(self, match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            return candidate
+        if address.version != 6:
+            return candidate
+        return self._alias("HOST", candidate)
 
     def aliases(self) -> dict[str, str]:
         return {
@@ -386,11 +429,44 @@ def _scan_bytes(name: str, content: bytes) -> list[str]:
     if b"\0" in content:
         return [f"{name}: binary content is not allowlisted"]
     text = content.decode("utf-8", errors="replace")
-    return [
+    findings = [
         f"{name}: matched secret rule {index}"
         for index, rule in enumerate(SECRET_RULES, start=1)
         if rule.search(text)
     ]
+    if _has_unresolved_ipv6(text):
+        findings.append(f"{name}: unresolved ipv6 literal")
+    if _has_high_entropy_secret(text):
+        findings.append(f"{name}: high entropy candidate")
+    return findings
+
+
+def _has_unresolved_ipv6(text: str) -> bool:
+    for match in IPV6_CANDIDATE_RE.finditer(text):
+        try:
+            address = ipaddress.ip_address(match.group(0))
+        except ValueError:
+            continue
+        if address.version == 6:
+            return True
+    return False
+
+
+def _has_high_entropy_secret(text: str) -> bool:
+    for match in HIGH_ENTROPY_RE.finditer(text):
+        candidate = match.group(0)
+        if candidate.startswith("[REDACTED:"):
+            continue
+        if re.fullmatch(r"[0-9a-fA-F]+", candidate):
+            continue
+        # Hyphenated lowercase slugs (e.g. this file's own generator/scanner
+        # names in manifest.json) are identifiers, not random secrets.
+        if re.fullmatch(r"[a-z]+(?:-[a-z]+)+", candidate):
+            continue
+        if len(set(candidate)) < 12:
+            continue
+        return True
+    return False
 
 
 def _finding_message(findings: list[str]) -> str:
@@ -403,7 +479,9 @@ def _ruleset_hash() -> str:
         SECRET_NAME_RULE.pattern,
         ADDRESS_RE.pattern,
         IPV4_RE.pattern,
-        HOME_PATH_RE.pattern,
+        IPV6_CANDIDATE_RE.pattern,
+        PATH_RE.pattern,
+        HIGH_ENTROPY_RE.pattern,
     ]
     return hashlib.sha256("\n".join(rules).encode()).hexdigest()
 
