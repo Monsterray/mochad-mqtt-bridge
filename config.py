@@ -80,7 +80,7 @@ class MqttTlsConfig:
     ca_file: str | None = None
     cert_file: str | None = None
     key_file: str | None = None
-    key_password: str | None = None
+    key_password: str | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,7 +93,7 @@ class Config:
     mqtt_port: int
 
     mqtt_username: str | None
-    mqtt_password: str | None
+    mqtt_password: str | None = field(repr=False)
     mqtt_tls: MqttTlsConfig
 
     mqtt_base_topic: str
