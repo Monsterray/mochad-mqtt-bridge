@@ -204,70 +204,104 @@ and module outcomes remain human-approved hardware evidence.
 
 ## Windows Development
 
-This repository is pure Python and has by far the best Windows story of the
-three repos in the family. Development and testing run natively on Windows,
-with no WSL required for the core work.
+Pure Python — this repo has the best Windows story of the three. **177 of its 196 tests pass natively
+on Windows with no WSL at all.** WSL2 is only needed for the MQTT integration tests and Docker.
 
-Create a virtual environment and run the source suite:
+### Minimum setup
 
-```text
+Three commands:
+
+```powershell
+git clone -c core.autocrlf=false https://github.com/Monsterray/mochad-mqtt-bridge.git
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Then:
+
+```powershell
 .venv\Scripts\python -m pytest
 ```
 
-On Windows 11 with Python 3.12.10, `python -m pytest` produces `177 passed,
-13 failed, 6 skipped`. All 13 failures are Windows platform artifacts, not
-product bugs. Compare local Windows runs against this baseline rather than
-expecting zero failures, and confirm results on Linux or CI before trusting
-them.
+Expect **`177 passed, 13 failed, 6 skipped`**. That is the healthy Windows result — compare against
+this baseline, not against zero. All 13 failures are platform artifacts, not product bugs.
 
-- Eight failures come from `tempfile.NamedTemporaryFile` files that cannot be
-  reopened by name while still open on Windows, surfacing as
-  `ConfigError: ... points to an unreadable file ...: [Errno 13] Permission
-  denied`. This affects `test_config.py` and `test_device_registry.py`.
-- Several failures are POSIX file-mode assertions that Windows does not
-  honor, such as `assert 438 == 384` (0o666 vs 0o600) and `assert 438 == 416`
-  (vs 0o640), in `test_config_backup_restore.py` and `test_support_bundle.py`.
-- `test_container_permissions.py` calls `bash -n` on a shell script and fails
-  with exit code 127 when `bash` is not on `PATH`.
-- `test_config_backup_restore.py::test_activation_failure_restores_every_original_file`
-  fails for a subtler reason: its fault injection matches the hardcoded POSIX
-  substring `"/payload/files/config/discovery_registry.json"`, which never
-  matches Windows backslash paths, so the synthetic failure never fires and
-  the expected exception is never raised. This is a test-portability issue,
-  not a product bug.
-- The 6 skips are environmental: `mosquitto` is not installed (integration
-  and lifecycle tests), and `RUN_MQTT_TLS_INTEGRATION=1` is not set.
+> [!IMPORTANT]
+> **Always clone with `core.autocrlf=false`.** Git otherwise rewrites `docker-entrypoint.sh` and the
+> `scripts/validate` scripts to CRLF, which breaks them inside the container and makes shellcheck emit
+> phantom `SC1017 literal carriage return` errors.
+>
+> Already cloned the wrong way? `git config` alone does not rewrite the working tree:
+> ```bash
+> git config core.autocrlf false && git rm --cached -r . && git reset --hard
+> ```
 
-A few Windows-specific gotchas apply:
+### Full coverage in WSL2
 
-1. Clone with CRLF conversion off:
+For a completely green run — all 196 tests, no failures and no skips:
 
-   ```sh
-   git clone -c core.autocrlf=false https://github.com/Monsterray/mochad-mqtt-bridge.git
-   ```
+```powershell
+wsl -u root -- apt-get update && wsl -u root -- apt-get install -y mosquitto mosquitto-clients
+```
 
-   or run `git config core.autocrlf false` in an existing clone. Otherwise
-   Git rewrites `docker-entrypoint.sh` and the `scripts/validate` shell
-   scripts to CRLF, which breaks them in the container and makes shellcheck
-   emit spurious `SC1017 literal carriage return` errors.
-2. `python3` does not exist on Windows; the command is `python`. Anything
-   invoking `python3` fails with exit code 9009.
-3. `bash` must be on `PATH` for the container-permission tests; Git Bash
-   provides it.
-4. Tests needing `mosquitto` or Docker will skip or fail; use WSL2 or a Linux
-   host for the full integration matrix.
+```bash
+python3 -m venv ~/.venv-bridge && ~/.venv-bridge/bin/pip install -r requirements.txt -r requirements-dev.txt
+RUN_MQTT_TLS_INTEGRATION=1 ~/.venv-bridge/bin/python -m pytest
+```
 
-| Task | Where it runs |
+`mosquitto` unlocks the MQTT integration and lifecycle tests; `RUN_MQTT_TLS_INTEGRATION=1` unlocks the
+three TLS tests. Disable the system broker (`systemctl disable --now mosquitto`) so it does not hold
+port 1883 — the tests start their own.
+
+<details>
+<summary><b>Why the 13 Windows failures happen</b></summary>
+
+<br>
+
+| Count | Cause |
 | --- | --- |
-| Edit code | Either |
-| Unit tests | Windows native |
-| MQTT integration tests (needs mosquitto) | WSL2 or Linux |
-| TLS integration tests | WSL2 or Linux |
-| Container permission tests | Either, with `bash` on `PATH` |
-| Docker image build | WSL2 or Linux |
-| shellcheck | Either; on Windows install it with `pip install shellcheck-py` (no `bash` needed) |
+| 8 | `tempfile.NamedTemporaryFile` cannot be reopened by name while still open on Windows — `[Errno 13] Permission denied`. Affects `test_config.py` and `test_device_registry.py` |
+| 3 | POSIX file-mode assertions — `assert 438 == 384` (`0o666` vs `0o600`) and `438 == 416` (vs `0o640`). Windows has no POSIX permission bits |
+| 1 | `test_container_permissions.py` calls `bash -n`; exits `127` without `bash` on PATH |
+| 1 | `test_activation_failure_restores_every_original_file` injects a fault keyed to the hardcoded POSIX substring `"/payload/files/config/..."`, which never matches Windows backslash paths — so the synthetic failure never fires. A test-portability issue, not a product bug |
+
+The 6 skips are environmental: `mosquitto` not installed, and `RUN_MQTT_TLS_INTEGRATION` unset.
+
+</details>
+
+<details>
+<summary><b>Gotchas and troubleshooting</b></summary>
+
+<br>
+
+- **`python3` does not exist on Windows** — the command is `python`. Anything invoking `python3` exits `9009`.
+- **Keep `bash` on PATH** (Git Bash) for the container-permission tests.
+- **Set `PYTHONUTF8=1`** — the console is cp1252/IBM437 and printing any non-ASCII character raises
+  `UnicodeEncodeError`. Persist it with
+  `[Environment]::SetEnvironmentVariable('PYTHONUTF8','1','User')`, then open a new terminal.
+- **Never "fix" a POSIX file-mode failure on Windows.** The assertion is correct; the platform is wrong.
+- A green Windows run says nothing about the shell or container paths — confirm in WSL before opening a PR.
+
+| Symptom | Fix |
+| --- | --- |
+| `UnicodeEncodeError: 'charmap' codec` | Set `PYTHONUTF8=1` |
+| `exit code 9009` | Something called `python3`; use `python` |
+| `exit code 127` | `bash` not on PATH |
+| `[Errno 13] Permission denied` on a temp file | Expected on Windows; verify in WSL |
+| `assert 438 == 384` | Expected on Windows; do not "fix" |
+
+</details>
+
+### Where each task runs
+
+| Task | Windows | WSL2 / Linux |
+| --- | --- | --- |
+| Edit code, `git` | Yes | Yes |
+| Unit tests | **Yes** — 177 pass | Yes — 196 pass |
+| MQTT / TLS integration tests | No | Yes (needs `mosquitto`) |
+| Container permission tests | With Git Bash | Yes |
+| `docker build` | Docker Desktop + WSL2 | Yes |
+| shellcheck | Yes (`shellcheck-py`) | Yes |
 
 ## Related Projects
 
