@@ -107,7 +107,10 @@ class Redactor:
         )
         value = AUTHORIZATION_RE.sub(r"\1[REDACTED:secret]", value)
         value = SECRET_ASSIGNMENT_RE.sub(r"\1[REDACTED:secret]", value)
-        value = URL_CREDENTIALS_RE.sub(r"\1[REDACTED:credentials]@", value)
+        # "url_userinfo" matches the name both sibling collectors use for this
+        # class, so one support engineer reading three bundles sees one
+        # vocabulary.
+        value = URL_CREDENTIALS_RE.sub(r"\1[REDACTED:url_userinfo]@", value)
         value = ADDRESS_RE.sub(
             lambda match: self._alias("DEVICE", match.group(0)),
             value,
