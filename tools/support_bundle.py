@@ -44,11 +44,24 @@ SECRET_ASSIGNMENT_RE = re.compile(
 # assignment -- the value legitimately contains a space. Capture the whole
 # remainder of the value instead of stopping at the first token, or the
 # credential after the scheme word survives untouched.
+# These rules both redact and, in _scan_bytes, fail the build. They must
+# therefore not match their own output, or every bundle containing an
+# Authorization header or a broker URL becomes unbuildable.
+#
+# The "not already redacted" guard sits immediately after the single-character
+# [:=] rather than after the following \s*. Placed after \s*, the engine simply
+# backtracks one space, evaluates the guard against " [REDACTED:...", finds it
+# passes, and matches anyway -- so the guard has to span the whitespace itself
+# from a position backtracking cannot move.
 AUTHORIZATION_RE = re.compile(
-    r"(?i)(" + _PREFIXED_KEYWORD + r"authorization\s*[:=]\s*)"
-    r"(?!\[REDACTED:)[^\r\n,;]+"
+    r"(?i)(" + _PREFIXED_KEYWORD + r"authorization\s*[:=](?!\s*\[REDACTED:)\s*)"
+    r"[^\r\n,;]+"
 )
-URL_CREDENTIALS_RE = re.compile(r"(?i)(\bmqtts?://)[^/@\s]+@")
+# Any scheme, not just mqtt:// -- a bundle can easily carry an https:// or
+# amqp:// URL with embedded credentials, and restricting this to MQTT left
+# those passwords in the clear. Both sibling collectors match any scheme.
+URL_CREDENTIALS_RE = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)(?!\[REDACTED:)[^/@\s]+@")
 # High-entropy backstop: a run of 32+ base64/hex-ish characters that slipped
 # past every keyword rule above. This never redacts by itself -- it only
 # fails the bundle build (see _scan_bytes) so a missed secret cannot ship.
