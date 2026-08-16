@@ -102,7 +102,7 @@ topic helper, and TCP/MQTT clients remain transport focused.
   maintained `mochad-redux`.
 - An MQTT broker such as Eclipse Mosquitto.
 - Home Assistant with MQTT configured for automatic discovery.
-- Docker with Compose v2, or Python 3.11 through 3.13 for source execution.
+- Docker with Compose v2, or Python 3.10 through 3.14 for source execution.
 - Broker ACL access to `x10/#` and the configured Home Assistant discovery
   prefix.
 
