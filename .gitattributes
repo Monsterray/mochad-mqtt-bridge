@@ -14,5 +14,12 @@
 # file extension.
 * text=auto eol=lf
 
-# Images must never be newline-converted or line-diffed.
-*.png binary
+# Binary paths: never newline-converted, never line-diffed. The explicit -eol
+# clears the eol=lf set by the "*" rule above; "binary" implies -text so no
+# conversion happens either way, but leaving eol set on a binary path is
+# misleading to read and relies on attribute precedence rather than saying what
+# is meant.
+*.png binary -eol
+*.gz  binary -eol
+*.ico binary -eol
+*.pdf binary -eol
