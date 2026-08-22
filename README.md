@@ -180,6 +180,7 @@ the checks attached to the exact tested commit.
 - [Future mochad JSON API](docs/future-mochad-json-api.md)
 - [Release engineering](docs/release-engineering.md)
 - [CI and branch protection](docs/ci-branch-protection.md)
+- [Test strategy](docs/test-strategy.md)
 - [Security policy](SECURITY.md)
 
 ## Development and Testing
