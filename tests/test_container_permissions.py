@@ -96,6 +96,16 @@ class ContainerPermissionsTests(unittest.TestCase):
         self.assertIn("ALLOW_ROOT: ${ALLOW_ROOT:-false}", compose)
         self.assertIn("ALLOW_ROOT=false", env_example)
 
+    def test_compose_documents_discovery_enabled(self) -> None:
+        compose = (ROOT / "docker-compose.yml").read_text()
+        env_example = (ROOT / ".env.example").read_text()
+
+        self.assertIn(
+            "MQTT_DISCOVERY_ENABLED: ${MQTT_DISCOVERY_ENABLED:-true}",
+            compose,
+        )
+        self.assertIn("MQTT_DISCOVERY_ENABLED=true", env_example)
+
     def test_gitignore_excludes_real_secret_files(self) -> None:
         gitignore = (ROOT / ".gitignore").read_text()
 

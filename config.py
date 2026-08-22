@@ -1042,6 +1042,11 @@ def load_config() -> Config:
             allow_experimental_profiles,
         ),
 
+        discovery_enabled=_get_bool(
+            "MQTT_DISCOVERY_ENABLED",
+            True,
+        ),
+
         discovery_cleanup=_get_bool(
             "DISCOVERY_CLEANUP",
             False,
