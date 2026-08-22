@@ -26,7 +26,7 @@ MAX_LOG_LINES = 1000
 # word character, so "\bpassword" never matches inside "MQTT_PASSWORD" -- this
 # repo's own credential. The alternative below matches either start-of-string
 # or a genuine non-identifier character before the (optional) prefix runs.
-_PREFIXED_KEYWORD = r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]+_)*"
+_PREFIXED_KEYWORD = r'''(?:^|[^A-Za-z0-9])["']?(?:[A-Za-z0-9]+_)*'''
 
 PRIVATE_KEY_RE = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----", re.IGNORECASE)
 # A trailing "_WORD" run lets SECRET_KEY= and TLS_KEY_PASSWORD= match through
@@ -34,10 +34,14 @@ PRIVATE_KEY_RE = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----", re.IGNORECASE)
 # ordinary diagnostics such as "primary key: id" or "sort key=timestamp" -- a
 # support bundle has to stay useful as well as safe.
 _KEYWORD_SUFFIX = r"(?:_[A-Za-z0-9]+)*"
+_SECRET_VALUE = (
+    r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|'''
+    r"(?:(?:Bearer|Basic)\s+)?[^\s,;{\[]+)"
+)
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)(" + _PREFIXED_KEYWORD +
     r"(?:password|passwd|token|api[_-]?key|secret)" + _KEYWORD_SUFFIX +
-    r"\s*[:=]\s*)(?!\[REDACTED:)[^\s,;]+"
+    r'''["']?\s*[:=]\s*)(?!\[REDACTED:)''' + _SECRET_VALUE
 )
 # Authorization header values ("Bearer <token>", "Basic <base64>") carry a
 # scheme word before the credential, so -- unlike a plain "KEY=value"
@@ -54,8 +58,8 @@ SECRET_ASSIGNMENT_RE = re.compile(
 # passes, and matches anyway -- so the guard has to span the whitespace itself
 # from a position backtracking cannot move.
 AUTHORIZATION_RE = re.compile(
-    r"(?i)(" + _PREFIXED_KEYWORD + r"authorization\s*[:=](?!\s*\[REDACTED:)\s*)"
-    r"[^\r\n,;]+"
+    r"(?i)(" + _PREFIXED_KEYWORD +
+    r'''authorization["']?\s*[:=](?!\s*\[REDACTED:)\s*)''' + _SECRET_VALUE
 )
 # Any scheme, not just mqtt:// -- a bundle can easily carry an https:// or
 # amqp:// URL with embedded credentials, and restricting this to MQTT left
