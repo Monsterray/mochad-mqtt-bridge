@@ -38,6 +38,36 @@ Python source coverage runs across every supported interpreter. Broker,
 lifecycle, and container behavior run in canonical Linux environments. Release
 publication remains isolated in `release-image.yml`.
 
+## Develop Maintenance Record: 2026-08-22
+
+Baseline `28cea8fffcf2d449923aebdf315dc965069f375d` includes PRs #12 through
+#15. The important fixes and decisions are:
+
+- Support-bundle redaction handles quoted JSON-style credential values without
+  matching its own replacement output.
+- `MQTT_DISCOVERY_ENABLED` previously existed in the model and documentation
+  but was not parsed by `load_config()`, passed through development Compose, or
+  enforced by every discovery path. It now defaults to `true`, accepts the
+  normal strict boolean parser, and blocks entity, diagnostic, state-requested,
+  cleanup, reset, and rediscovery publication when false.
+- Disabling discovery pauses registry writes instead of clearing the retained
+  topic inventory. This preserves the data needed to prune stale entities after
+  discovery is enabled again.
+- The Heyu archaeology record is pinned research, not copied source or a device
+  support claim. Its current-disposition section separates implemented profile,
+  confidence, provenance, and reconciliation work from deferred RF research.
+
+The old `test-simplification/mochad-mqtt-bridge` branch was retired. Its test
+ownership inventory became this document; its workflow rename was not adopted.
+Its hardware script was also rejected because it duplicated the shared lab
+safety authority and transmitted on house code `A`. Hardware work must use the
+current lock and approval process and development house code `D` only.
+
+For the discovery fix, targeted local tests passed, exact-SHA restricted Ubuntu
+validation reported six `PASS`, two `NOT RUN`, and one `NOT APPLICABLE`, and
+the final `develop` Python, MQTT, lifecycle, container, and multiarchitecture
+workflows all passed.
+
 ## Regression Boundaries
 
 Keep deterministic coverage for status-parser isolation, validation before
