@@ -51,7 +51,8 @@ def test_bundle_is_sanitized_bounded_and_manifested(tmp_path):
     )
     log = tmp_path / "bridge.log.input"
     log.write_text(
-        "old line\nA1 connected to 192.168.8.99\npassword=hunter2\n",
+        "old line\nA1 connected to 192.168.8.99\npassword=hunter2\n"
+        '"MQTT_PASSWORD": "json hunter2"\n',
         encoding="utf-8",
     )
     output = tmp_path / "support.tar.gz"
@@ -62,7 +63,7 @@ def test_bundle_is_sanitized_bounded_and_manifested(tmp_path):
         config_path=config,
         status_path=status,
         log_path=log,
-        max_log_lines=2,
+        max_log_lines=3,
     )
 
     members = _members(output)
@@ -77,6 +78,7 @@ def test_bundle_is_sanitized_bounded_and_manifested(tmp_path):
     assert scan_result["unresolved_findings"] == 0
     assert manifest["entries"][0]["repository_owner"] == "mochad-mqtt-bridge"
     assert "hunter2" not in combined
+    assert "json hunter2" not in combined
     assert "192.168.8.99" not in combined
     assert '"A1"' not in combined
     assert "HOST_1" in combined
@@ -101,7 +103,7 @@ def test_archive_scan_fails_closed_and_output_is_removed(tmp_path, monkeypatch):
 def test_archive_scanner_checks_names_and_contents(tmp_path):
     archive_path = tmp_path / "unsafe.tar.gz"
     with tarfile.open(archive_path, "w:gz") as archive:
-        content = b"token=not-redacted\n"
+        content = b'"MQTT_PASSWORD": "not redacted"\n'
         info = tarfile.TarInfo("safe.txt")
         info.size = len(content)
         archive.addfile(info, io.BytesIO(content))

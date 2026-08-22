@@ -1,0 +1,18 @@
+# These repositories are developed on Windows, macOS and Linux, but the daemon,
+# container entrypoints, udev rules, systemd units and shell scripts are all
+# consumed by Linux at runtime. Normalize every text file to LF both in the
+# object store and on checkout, so no contributor's platform, client config, or
+# editor can introduce CRLF.
+#
+# This is not cosmetic. A CRLF container entrypoint fails at startup with a
+# confusing "exec format error", and CRLF shell scripts make ShellCheck report
+# thousands of spurious SC1017 "literal carriage return" findings that bury the
+# real ones. Both have happened here.
+#
+# Covers extensionless executables too (scripts/backup/mochad-redux-backup,
+# packaging/openwrt/*), which are text but easy to miss in a rule keyed on
+# file extension.
+* text=auto eol=lf
+
+# Images must never be newline-converted or line-diffed.
+*.png binary
