@@ -7,7 +7,12 @@ from bridge import Bridge
 from config import Config, MqttTlsConfig
 from discovery_registry import DiscoveryRegistry
 from mqtt_client import MqttCommandMessage
-from models import BridgeCommand, DeviceConfig, DeviceType
+from models import (
+    BridgeCommand,
+    DeviceConfig,
+    DeviceType,
+    PublishDiscoveryAction,
+)
 
 
 class FakeMqttClient:
@@ -137,6 +142,45 @@ class BridgeCommandParsingTests(unittest.TestCase):
 
 
 class BridgeDiscoveryPruneTests(unittest.TestCase):
+    def test_disabled_discovery_publishes_nothing_and_preserves_registry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = f"{directory}/discovery_registry.json"
+            tracked_topic = "homeassistant/light/x10_A1/config"
+            registry = DiscoveryRegistry(registry_path)
+            registry.save({tracked_topic})
+            mqtt = FakeMqttClient()
+            config = replace(
+                minimal_config(
+                    devices={
+                        "A1": DeviceConfig(
+                            address="A1",
+                            name="Lamp",
+                            entity_type=DeviceType.LIGHT,
+                        )
+                    }
+                ),
+                discovery_enabled=False,
+            )
+            bridge = Bridge(
+                config,
+                mqtt_client=mqtt,
+                mochad_client=FakeMochadClient(),
+            )
+            bridge.discovery_registry = registry
+
+            self.assertEqual(bridge._publish_current_discovery(), 0)
+            bridge._publish_bridge_diagnostic_discovery()
+            bridge.execute_action(PublishDiscoveryAction(address="A1"))
+            cleanup = bridge._run_discovery_cleanup(force=True)
+            reset = bridge._reset_discovery()
+            bridge._handle_bridge_command(BridgeCommand.REDISCOVER)
+
+            self.assertEqual(mqtt.discovery_messages, [])
+            self.assertEqual(bridge._desired_discovery_topics(), set())
+            self.assertEqual(cleanup["message"], "MQTT discovery is disabled.")
+            self.assertEqual(reset["cleared"], 0)
+            self.assertEqual(registry.load(), {tracked_topic})
+
     def test_obsolete_prune_button_is_cleared_without_general_cleanup(self):
         for tracked in (False, True):
             with self.subTest(tracked=tracked):

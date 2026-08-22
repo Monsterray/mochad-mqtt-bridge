@@ -142,6 +142,8 @@ never copied into `/config`.
 
 `MQTT_DISCOVERY_ENABLED` controls whether Home Assistant discovery messages are
 generated and published. It does not disable core MQTT event transport.
+Disabling discovery also pauses discovery cleanup and registry updates, which
+preserves the registry for cleanup after discovery is enabled again.
 
 Discovery registry state defaults to
 `/config/discovery_registry.json`. `DISCOVERY_CLEANUP=true` prunes stale
