@@ -1,14 +1,15 @@
 import json
 import os
-from pathlib import Path
 import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import patch
 
 from config import ConfigError, create_config_file_if_missing, load_config
 from device_registry import (
     MAX_SEQUENCE_STEPS,
+    RESEARCH_PROFILE_IDS,
     DeviceProfile,
     DeviceProfileRegistry,
     EvidenceClaim,
@@ -19,14 +20,13 @@ from device_registry import (
     ProfileLifecycle,
     ProfileRegistrationError,
     ProfileSelectionError,
-    RESEARCH_PROFILE_IDS,
     apply_profile,
     configured_profile_diagnostics,
     generated_supported_profiles_markdown,
     get_profile,
     global_command_response,
-    profile_schema_payload,
     profile_ids,
+    profile_schema_payload,
     registered_profile_ids,
     select_profile,
 )
@@ -131,12 +131,11 @@ class DeviceProfileRegistrationTests(unittest.TestCase):
         )
 
         for profile, field in cases:
-            with self.subTest(field=field):
-                with self.assertRaisesRegex(
-                    ProfileRegistrationError,
-                    f"missing_metadata.*{field}",
-                ):
-                    DeviceProfileRegistry((profile,))
+            with self.subTest(field=field), self.assertRaisesRegex(
+                ProfileRegistrationError,
+                f"missing_metadata.*{field}",
+            ):
+                DeviceProfileRegistry((profile,))
 
     def test_invalid_lifecycle_values_are_rejected(self):
         valid = _named_profile(ProfileLifecycle.EXPERIMENTAL, _evidence())
@@ -489,18 +488,16 @@ class DeviceProfileConfigTests(unittest.TestCase):
             os.environ,
             {"X10_DEVICES": "A2:Unknown Device:not_a_profile"},
             clear=True,
-        ):
-            with self.assertRaisesRegex(ConfigError, "Unknown device type"):
-                load_config()
+        ), self.assertRaisesRegex(ConfigError, "Unknown device type"):
+            load_config()
 
     def test_experimental_profile_is_rejected_by_default(self):
         with patch.dict(
             os.environ,
             {"X10_DEVICES": "A2:Door Chime:sc546a_chime"},
             clear=True,
-        ):
-            with self.assertRaisesRegex(ConfigError, "experimental"):
-                load_config()
+        ), self.assertRaisesRegex(ConfigError, "experimental"):
+            load_config()
 
     def test_experimental_profile_works_with_environment_opt_in(self):
         with patch.dict(
@@ -510,9 +507,8 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 "X10_DEVICES": "A2:Door Chime:sc546a_chime",
             },
             clear=True,
-        ):
-            with self.assertLogs("device_registry", level="WARNING"):
-                config = load_config()
+        ), self.assertLogs("device_registry", level="WARNING"):
+            config = load_config()
 
         self.assertTrue(config.allow_experimental_profiles)
         self.assertEqual(config.devices["A2"].profile, "sc546a_chime")
@@ -539,9 +535,8 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 os.environ,
                 {"BRIDGE_CONFIG_FILE": config_file.name},
                 clear=True,
-            ):
-                with self.assertLogs("device_registry", level="WARNING"):
-                    config = load_config()
+            ), self.assertLogs("device_registry", level="WARNING"):
+                config = load_config()
 
         self.assertTrue(config.allow_experimental_profiles)
         self.assertEqual(config.devices["A2"].profile, "sc546a_chime")
@@ -554,9 +549,8 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 "X10_DEVICES": "A1:Socket:lm15a_socket_rocket",
             },
             clear=True,
-        ):
-            with self.assertRaisesRegex(ConfigError, "research-only"):
-                load_config()
+        ), self.assertRaisesRegex(ConfigError, "research-only"):
+            load_config()
 
     def test_generated_config_preserves_profile_opt_in(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -618,12 +612,11 @@ class DeviceProfileConfigTests(unittest.TestCase):
                 os.environ,
                 {"BRIDGE_CONFIG_FILE": config_file.name},
                 clear=True,
+            ), self.assertRaisesRegex(
+                ConfigError,
+                "profile_schema_version.*unsupported",
             ):
-                with self.assertRaisesRegex(
-                    ConfigError,
-                    "profile_schema_version.*unsupported",
-                ):
-                    load_config()
+                load_config()
 
 
 class Sc546aBehaviorTests(unittest.TestCase):

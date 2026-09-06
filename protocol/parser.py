@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 from models import (
     DeviceEvent,
-    Direction,
     HouseEvent,
     StatusSnapshot,
     Transport,

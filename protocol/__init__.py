@@ -13,9 +13,9 @@ __all__ = [
     "ProtocolCapabilities",
     "ProtocolParser",
     "encode_command",
-    "encode_rf_command",
     "encode_pl_command",
+    "encode_rf_command",
+    "is_valid_address",
     "normalize_address",
     "normalize_house",
-    "is_valid_address",
 ]

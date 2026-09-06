@@ -1,6 +1,6 @@
-import unittest
 import threading
 import time
+import unittest
 
 from mochad_client import MochadClient
 
@@ -47,6 +47,38 @@ class MochadClientTests(unittest.TestCase):
             ],
         )
         self.assertTrue(all(b"\0" not in data for data in sock.sent))
+
+    def test_send_line_rejects_embedded_newline(self):
+        # send_line() is the primitive behind CGI finding 5b's injection: an
+        # embedded newline smuggles a second mochad command onto the wire.
+        # No caller does this today, but the primitive itself should refuse
+        # it regardless of who calls it.
+        sock = FakeSocket()
+        client = MochadClient(host="mochad")
+        client._socket = sock
+
+        for smuggled in (
+            "pl A1 on\nrfsec 0x11 disarm",
+            "pl A1 on\rrfsec 0x11 disarm",
+            "pl A1 on\r\nrfsec 0x11 disarm",
+        ):
+            with self.subTest(smuggled=smuggled):
+                with self.assertRaises(ValueError):
+                    client.send_line(smuggled)
+
+        self.assertEqual(sock.sent, [])
+
+    def test_send_line_still_strips_a_single_trailing_newline(self):
+        # A trailing \r\n is not an injection -- it is the shape mochad's own
+        # protocol responses arrive in, and send_line() is documented to
+        # accept it. Only an *embedded* newline should be rejected.
+        sock = FakeSocket()
+        client = MochadClient(host="mochad")
+        client._socket = sock
+
+        client.send_line("hello\r\n")
+
+        self.assertEqual(sock.sent, [b"hello\n"])
 
     def test_connect_uses_short_timeout_and_read_timeout(self):
         sock = FakeSocket()

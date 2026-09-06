@@ -11,7 +11,6 @@ import re
 
 from models import DeviceConfig, DeviceType
 
-
 DEFAULT_BASE_TOPIC = "x10"
 DEFAULT_DISCOVERY_PREFIX = "homeassistant"
 

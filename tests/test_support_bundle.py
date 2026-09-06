@@ -1,8 +1,8 @@
 import io
 import json
-from pathlib import Path
 import stat
 import tarfile
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +11,6 @@ from tools.support_bundle import (
     create_bundle,
     scan_archive,
 )
-
 
 SHA = "a" * 40
 

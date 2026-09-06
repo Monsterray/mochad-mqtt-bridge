@@ -19,7 +19,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-
 BRIDGE_DEVICE_IDENTIFIER = "mqtt_mochad_bridge"
 BRIDGE_UNIQUE_ID_PREFIX = "mqtt_mochad_bridge_"
 X10_UNIQUE_ID_RE = re.compile(r"^x10_[A-P](?:[1-9]|1[0-6])$")

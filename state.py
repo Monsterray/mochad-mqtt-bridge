@@ -9,10 +9,10 @@ or environment variables.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from threading import RLock
-from typing import Iterable
 
 from models import (
     BridgeAction,
@@ -39,7 +39,6 @@ from models import (
     StatusSnapshot,
     UnknownEvent,
 )
-
 
 STATE_COMMANDS = {
     Command.ON,

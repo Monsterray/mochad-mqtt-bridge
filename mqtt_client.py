@@ -11,14 +11,14 @@ from __future__ import annotations
 import json
 import logging
 import ssl
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 from config import MqttTlsConfig
 from models import Command, DeviceConfig, DiscoveryMessage
 from mqtt_tls import build_mqtt_ssl_context
 from topics import Topics
-
 
 _LOG = logging.getLogger(__name__)
 _LOG.addHandler(logging.NullHandler())

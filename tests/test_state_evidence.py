@@ -25,7 +25,6 @@ from models import (
 )
 from state import StateManager
 
-
 NOW = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
 
 

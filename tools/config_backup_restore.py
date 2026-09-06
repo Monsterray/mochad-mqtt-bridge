@@ -4,24 +4,23 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import hashlib
 import io
 import json
 import os
-from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
 import stat
 import subprocess
 import tarfile
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import config as bridge_config
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
 from version import BRIDGE_VERSION
-
 
 MANIFEST_SCHEMA_VERSION = 1
 DISCOVERY_REGISTRY_VERSION = 1

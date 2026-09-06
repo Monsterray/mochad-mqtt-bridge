@@ -62,14 +62,13 @@ class MqttTlsContextTests(unittest.TestCase):
         with patch(
             "mqtt_tls.ssl.create_default_context",
             side_effect=OSError("missing CA"),
-        ):
-            with self.assertRaises(MqttTlsError):
-                build_mqtt_ssl_context(
-                    MqttTlsConfig(
-                        enabled=True,
-                        ca_file="/run/secrets/missing-ca.crt",
-                    )
+        ), self.assertRaises(MqttTlsError):
+            build_mqtt_ssl_context(
+                MqttTlsConfig(
+                    enabled=True,
+                    ca_file="/run/secrets/missing-ca.crt",
                 )
+            )
 
 
 if __name__ == "__main__":

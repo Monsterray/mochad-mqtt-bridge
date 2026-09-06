@@ -4,15 +4,13 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from device_registry import generated_supported_profiles_markdown
-
 
 OUTPUT = ROOT / "docs" / "supported-profiles.md"
 

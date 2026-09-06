@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -103,16 +103,18 @@ class ConfigTests(unittest.TestCase):
             secret.write("mqtt-secret\n")
             secret.flush()
 
-            with patch.dict(
-                os.environ,
-                {
-                    "MQTT_PASSWORD": "direct-secret",
-                    "MQTT_PASSWORD_FILE": secret.name,
-                },
-                clear=True,
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "MQTT_PASSWORD": "direct-secret",
+                        "MQTT_PASSWORD_FILE": secret.name,
+                    },
+                    clear=True,
+                ),
+                self.assertRaises(ConfigError),
             ):
-                with self.assertRaises(ConfigError):
-                    load_config()
+                load_config()
 
     def test_mqtt_tls_key_password_file_is_supported(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as secret:
@@ -138,40 +140,46 @@ class ConfigTests(unittest.TestCase):
             secret.write("key-secret\n")
             secret.flush()
 
-            with patch.dict(
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "MQTT_TLS_ENABLED": "true",
+                        "MQTT_TLS_CERT_FILE": "/run/secrets/mqtt_client.crt",
+                        "MQTT_TLS_KEY_FILE": "/run/secrets/mqtt_client.key",
+                        "MQTT_TLS_KEY_PASSWORD": "direct-secret",
+                        "MQTT_TLS_KEY_PASSWORD_FILE": secret.name,
+                    },
+                    clear=True,
+                ),
+                self.assertRaises(ConfigError),
+            ):
+                load_config()
+
+    def test_tls_settings_without_tls_enabled_are_rejected(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"MQTT_TLS_CA_FILE": "/run/secrets/mqtt_ca.crt"},
+                clear=True,
+            ),
+            self.assertRaises(ConfigError),
+        ):
+            load_config()
+
+    def test_mtls_requires_cert_and_key_together(self):
+        with (
+            patch.dict(
                 os.environ,
                 {
                     "MQTT_TLS_ENABLED": "true",
                     "MQTT_TLS_CERT_FILE": "/run/secrets/mqtt_client.crt",
-                    "MQTT_TLS_KEY_FILE": "/run/secrets/mqtt_client.key",
-                    "MQTT_TLS_KEY_PASSWORD": "direct-secret",
-                    "MQTT_TLS_KEY_PASSWORD_FILE": secret.name,
                 },
                 clear=True,
-            ):
-                with self.assertRaises(ConfigError):
-                    load_config()
-
-    def test_tls_settings_without_tls_enabled_are_rejected(self):
-        with patch.dict(
-            os.environ,
-            {"MQTT_TLS_CA_FILE": "/run/secrets/mqtt_ca.crt"},
-            clear=True,
+            ),
+            self.assertRaises(ConfigError),
         ):
-            with self.assertRaises(ConfigError):
-                load_config()
-
-    def test_mtls_requires_cert_and_key_together(self):
-        with patch.dict(
-            os.environ,
-            {
-                "MQTT_TLS_ENABLED": "true",
-                "MQTT_TLS_CERT_FILE": "/run/secrets/mqtt_client.crt",
-            },
-            clear=True,
-        ):
-            with self.assertRaises(ConfigError):
-                load_config()
+            load_config()
 
     def test_config_file_devices_and_friendly_names_are_parsed(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
@@ -354,28 +362,32 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.devices["A1"].command_repeat_delay_ms, 150)
 
     def test_invalid_command_repeats_are_rejected(self):
-        with patch.dict(
-            os.environ,
-            {
-                "X10_DEVICES": "A1:Living Room Lamp:light:0:150",
-            },
-            clear=True,
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "X10_DEVICES": "A1:Living Room Lamp:light:0:150",
+                },
+                clear=True,
+            ),
+            self.assertRaises(ConfigError),
         ):
-            with self.assertRaises(ConfigError):
-                load_config()
+            load_config()
 
     def test_invalid_config_file_json_is_rejected(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as config_file:
             config_file.write("{not-json")
             config_file.flush()
 
-            with patch.dict(
-                os.environ,
-                {"BRIDGE_CONFIG_FILE": config_file.name},
-                clear=True,
+            with (
+                patch.dict(
+                    os.environ,
+                    {"BRIDGE_CONFIG_FILE": config_file.name},
+                    clear=True,
+                ),
+                self.assertRaises(ConfigError),
             ):
-                with self.assertRaises(ConfigError):
-                    load_config()
+                load_config()
 
 
 if __name__ == "__main__":

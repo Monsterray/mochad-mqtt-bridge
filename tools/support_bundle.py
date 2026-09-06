@@ -4,18 +4,17 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
-
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
 
 SCHEMA_VERSION = 1
 MAX_LOG_LINES = 1000

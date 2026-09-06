@@ -7,11 +7,11 @@ lifecycle and evidence metadata before registration.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
-import logging
-import re
 
 from models import (
     Command,
@@ -23,7 +23,6 @@ from models import (
     RfIdentity,
     SecondaryChannel,
 )
-
 
 _LOG = logging.getLogger(__name__)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -1005,14 +1004,7 @@ def generated_supported_profiles_markdown() -> str:
         ]
     )
     lines.extend(
-        "| `{}` | {} | {} | {} | fixture={}, hardware={} |".format(
-            profile.profile_id,
-            profile.lifecycle.value,
-            profile.model,
-            profile.entity_type.name.lower(),
-            str(profile.evidence.fixture_verified).lower(),
-            str(profile.evidence.hardware_verified).lower(),
-        )
+        f"| `{profile.profile_id}` | {profile.lifecycle.value} | {profile.model} | {profile.entity_type.name.lower()} | fixture={str(profile.evidence.fixture_verified).lower()}, hardware={str(profile.evidence.hardware_verified).lower()} |"
         for profile in named
     )
     return "\n".join(lines) + "\n"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-from pathlib import Path
 import queue
 import shutil
 import socket
@@ -12,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from pathlib import Path
 
 import paho.mqtt.client as paho
 import pytest
@@ -20,7 +20,6 @@ from bridge import Bridge
 from config import Config, MqttTlsConfig
 from models import DeviceConfig
 from tests.support.fake_mochad_server import FakeMochadServer, ScriptedLine
-
 
 pytestmark = [pytest.mark.integration, pytest.mark.known_inputs]
 

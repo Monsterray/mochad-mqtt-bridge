@@ -12,13 +12,12 @@ import re
 from models import (
     BridgeCommand,
     DeviceConfig,
-    DiscoveryMessage,
     DeviceType,
+    DiscoveryMessage,
     MochadDiagnostics,
 )
 from topics import TopicError, Topics
 from version import BRIDGE_AUTHOR, BRIDGE_VERSION
-
 
 BRIDGE_DEVICE_IDENTIFIER = "mqtt_mochad_bridge"
 BRIDGE_DISPLAY_NAME = "MQTT Mochad Bridge"
@@ -577,13 +576,13 @@ class DiscoveryManager:
 
         device_block = message.payload["device"]
 
-        for key in {
+        for key in (
             "identifiers",
             "name",
             "manufacturer",
             "model",
             "sw_version",
-        }:
+        ):
             if key not in device_block:
                 raise DiscoveryError(
                     f"Discovery device block missing {key}."
@@ -599,13 +598,13 @@ class DiscoveryManager:
         if not isinstance(message.payload, dict):
             raise DiscoveryError("Bridge discovery payload must be a dict.")
 
-        for key in {
+        for key in (
             "name",
             "unique_id",
             "availability_topic",
             "device",
             "origin",
-        }:
+        ):
             if key not in message.payload:
                 raise DiscoveryError(
                     f"Bridge discovery payload missing {key}."

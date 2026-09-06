@@ -10,9 +10,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-import time
-from typing import Callable
-
+from collections.abc import Callable
 
 _LOG = logging.getLogger(__name__)
 _LOG.addHandler(logging.NullHandler())
@@ -136,6 +134,19 @@ class MochadClient:
     ) -> None:
         line = line.rstrip("\r\n")
 
+        # No caller passes attacker-controlled text through this today --
+        # encode_rf_command() builds structured commands from an address and
+        # a closed enum, and the diagnostic path uses hardcoded literals. But
+        # this is the exact primitive the CGI x10.pl command-injection finding
+        # exploited: an embedded newline smuggles a second mochad command
+        # after the first. Reject it here so the guarantee holds regardless
+        # of what future caller reaches this method, rather than depending on
+        # every future caller remembering not to.
+        if "\n" in line or "\r" in line:
+            raise ValueError(
+                f"mochad command line must not contain an embedded newline: {line!r}"
+            )
+
         with self._socket_lock:
             sock = self._socket
 
@@ -185,7 +196,7 @@ class MochadClient:
 
             try:
                 data = sock.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 continue
 
             if not data:
