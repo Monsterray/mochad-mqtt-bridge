@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import socket
 import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +46,7 @@ class FakeMochadServer:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
-    def start(self) -> "FakeMochadServer":
+    def start(self) -> FakeMochadServer:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return self
@@ -70,7 +70,7 @@ class FakeMochadServer:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
-    def __enter__(self) -> "FakeMochadServer":
+    def __enter__(self) -> FakeMochadServer:
         return self.start()
 
     def __exit__(self, exc_type, exc, traceback) -> None:
@@ -109,7 +109,7 @@ class FakeMochadServer:
         while not self._stop.is_set():
             try:
                 client, _ = listener.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -151,7 +151,7 @@ class FakeMochadServer:
         while not self._stop.is_set():
             try:
                 data = client.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return

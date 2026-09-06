@@ -1,6 +1,6 @@
-import unittest
 import threading
 import time
+import unittest
 
 from mochad_client import MochadClient
 

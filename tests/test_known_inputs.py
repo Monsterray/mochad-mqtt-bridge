@@ -13,7 +13,6 @@ from models import Command, DeviceConfig, DeviceEvent, DeviceType
 from mqtt_client import MqttCommandMessage
 from protocol import ProtocolParser
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

@@ -13,7 +13,6 @@ import sys
 import time
 from pathlib import Path
 
-
 DEFAULT_HEALTH_FILE = "/config/mqtt-mochad-bridge.health"
 DEFAULT_MAX_AGE_SECONDS = 30.0
 

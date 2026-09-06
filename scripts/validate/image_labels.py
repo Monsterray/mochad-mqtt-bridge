@@ -11,7 +11,6 @@ import re
 import subprocess
 import sys
 
-
 REQUIRED_LABELS = (
     "org.opencontainers.image.title",
     "org.opencontainers.image.description",

@@ -8,15 +8,15 @@ payloads, or construct MQTT topics.
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import signal
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable
 
 from config import (
     Config,
@@ -25,9 +25,10 @@ from config import (
     create_config_file_if_missing,
     load_config,
 )
+from device_registry import configured_profile_diagnostics
 from discovery import DiscoveryManager
 from discovery_registry import DiscoveryRegistry, DiscoveryRegistryError
-from device_registry import configured_profile_diagnostics
+from mochad_client import MochadClient
 from models import (
     BridgeAction,
     BridgeCommand,
@@ -50,14 +51,12 @@ from models import (
     SendMochadCommandAction,
     StateConfidence,
 )
-from mochad_client import MochadClient
 from mqtt_client import MqttBridgeCommandMessage, MqttClient, MqttCommandMessage
 from protocol import ProtocolParser, encode_rf_command
 from protocol.validation import normalize_address
 from state import StateManager
 from topics import Topics
 from version import BRIDGE_NAME, BRIDGE_VERSION
-
 
 _LOG = logging.getLogger(__name__)
 

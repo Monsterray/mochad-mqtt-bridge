@@ -1,18 +1,18 @@
-from dataclasses import replace
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from bridge import Bridge
 from config import Config, MqttTlsConfig
 from discovery_registry import DiscoveryRegistry
-from mqtt_client import MqttCommandMessage
 from models import (
     BridgeCommand,
     DeviceConfig,
     DeviceType,
     PublishDiscoveryAction,
 )
+from mqtt_client import MqttCommandMessage
 
 
 class FakeMqttClient:

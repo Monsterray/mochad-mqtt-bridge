@@ -15,7 +15,6 @@ from bridge import Bridge
 from config import configure_logging, load_config
 from version import BRIDGE_NAME, BRIDGE_VERSION
 
-
 _LOG = logging.getLogger(__name__)
 
 

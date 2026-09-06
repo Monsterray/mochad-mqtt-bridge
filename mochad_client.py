@@ -10,9 +10,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-import time
-from typing import Callable
-
+from collections.abc import Callable
 
 _LOG = logging.getLogger(__name__)
 _LOG.addHandler(logging.NullHandler())
@@ -185,7 +183,7 @@ class MochadClient:
 
             try:
                 data = sock.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 continue
 
             if not data:

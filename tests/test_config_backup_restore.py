@@ -1,9 +1,9 @@
 import io
 import json
 import os
-from pathlib import Path
 import stat
 import tarfile
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +13,6 @@ from tools.config_backup_restore import (
     inspect_backup,
     restore_backup,
 )
-
 
 REPOSITORY_SHA = "a" * 40
 

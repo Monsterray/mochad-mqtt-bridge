@@ -17,7 +17,6 @@ import pytest
 from config import MqttTlsConfig
 from mqtt_client import MqttClient
 
-
 RUN_INTEGRATION = os.getenv("RUN_MQTT_TLS_INTEGRATION") == "1"
 
 pytestmark = [pytest.mark.integration, pytest.mark.tls]

@@ -119,7 +119,7 @@ class MochadDiagnosticTests(unittest.TestCase):
         )
         bridge.state = SimpleNamespace(
             available=True,
-            snapshot=lambda: {},
+            snapshot=dict,
         )
         bridge.clients = SimpleNamespace(
             mqtt=SimpleNamespace(connected=True),
@@ -160,7 +160,7 @@ class MochadDiagnosticTests(unittest.TestCase):
         )
         bridge.state = SimpleNamespace(
             available=True,
-            snapshot=lambda: {},
+            snapshot=dict,
         )
         bridge.clients = SimpleNamespace(
             mqtt=SimpleNamespace(connected=True),

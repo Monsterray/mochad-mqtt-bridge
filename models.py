@@ -8,14 +8,12 @@ These models intentionally contain no application logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
-from enum import Enum, auto
 import json
 import re
 from abc import ABC
-
-
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from enum import Enum, auto
 
 ###############################################################################
 # Enumerations
@@ -768,7 +766,7 @@ class X10Address:
 	def parse(
 		cls,
 		value: str,
-	) -> "X10Address":
+	) -> X10Address:
 
 		value = value.strip().upper()
 
