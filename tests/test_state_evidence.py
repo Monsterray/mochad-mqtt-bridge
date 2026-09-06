@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -164,6 +165,9 @@ def test_status_reports_bounded_state_evidence_counts():
     manager = StateManager([DeviceConfig("A1", "Lamp")])
     manager.apply(_device_event(Direction.RX))
     bridge = object.__new__(Bridge)
+    # object.__new__ skips Bridge.__init__, so the lock it installs
+    # around self.devices has to be added by hand here too.
+    bridge._devices_lock = threading.RLock()
     bridge.config = SimpleNamespace(
         allow_experimental_profiles=False,
         mqtt_tls=MqttTlsConfig(),
