@@ -89,7 +89,12 @@ class ReleaseImageInputTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "release-image.yml").read_text()
 
         self.assertIn("packages: write", workflow)
-        self.assertIn("docker/login-action@v4", workflow)
+        # Pinned to a commit SHA (AUDIT.md #15); a bare version-tag
+        # substring check would no longer match, so assert the pin and
+        # the version comment travel together instead.
+        self.assertRegex(
+            workflow, r"docker/login-action@[0-9a-f]{40} # v4"
+        )
         self.assertIn("platforms: linux/amd64,linux/arm64", workflow)
         self.assertIn("push: ${{ github.ref_type == 'tag' }}", workflow)
         self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/master', workflow)
