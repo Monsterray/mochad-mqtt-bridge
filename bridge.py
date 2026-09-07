@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import signal
+import threading
 import time
 from collections import deque
 from collections.abc import Iterable
@@ -113,6 +114,18 @@ class Bridge:
         self._next_config_reload_check = (
             time.monotonic() + config.config_reload_interval_seconds
         )
+        # self.devices is mutated from the paho MQTT callback thread
+        # (_device_config's get-or-create insert) and read/replaced from the
+        # main thread (run_forever's config-reload loop and the discovery/
+        # diagnostics methods it calls). A plain dict offers no protection
+        # against a resize landing mid-iteration on the other thread -- CPython
+        # raises "RuntimeError: dictionary changed size during iteration" for
+        # exactly this. Every mutation and every full iteration goes through
+        # this lock; a bare len() or single-key lookup does not, since those
+        # are individually atomic under the GIL and only used for logging or
+        # as the first half of a check-then-act sequence that is itself
+        # lock-guarded where it matters (_device_config).
+        self._devices_lock = threading.RLock()
         self.devices = {
             address: device
             for address, device in config.devices.items()
@@ -1032,7 +1045,6 @@ class Bridge:
         self,
         new_config: Config,
     ) -> None:
-        old_devices = self.devices
         old_use_friendly_names = self.config.use_friendly_names
         old_allow_experimental = self.config.allow_experimental_profiles
         new_devices = {
@@ -1041,24 +1053,25 @@ class Bridge:
             if self._address_allowed_by_config(address)
         }
 
-        if (
-            new_devices == old_devices
-            and new_config.use_friendly_names == old_use_friendly_names
-            and new_config.allow_experimental_profiles
-            == old_allow_experimental
-        ):
-            _LOG.info("Config file reloaded with no runtime changes")
-            return
+        with self._devices_lock:
+            if (
+                new_devices == self.devices
+                and new_config.use_friendly_names == old_use_friendly_names
+                and new_config.allow_experimental_profiles
+                == old_allow_experimental
+            ):
+                _LOG.info("Config file reloaded with no runtime changes")
+                return
 
-        self.config = replace(
-            self.config,
-            devices=new_config.devices,
-            use_friendly_names=new_config.use_friendly_names,
-            allow_experimental_profiles=(
-                new_config.allow_experimental_profiles
-            ),
-        )
-        self.devices = new_devices
+            self.config = replace(
+                self.config,
+                devices=new_config.devices,
+                use_friendly_names=new_config.use_friendly_names,
+                allow_experimental_profiles=(
+                    new_config.allow_experimental_profiles
+                ),
+            )
+            self.devices = new_devices
         _LOG.info(
             "Config file reloaded devices=%d friendly_names=%s "
             "allow_experimental_profiles=%s",
@@ -1093,21 +1106,26 @@ class Bridge:
 
         return (stat.st_mtime_ns, stat.st_size)
 
+    def _devices_snapshot(self) -> dict[str, DeviceConfig]:
+        with self._devices_lock:
+            return dict(self.devices)
+
     def _device_config(
         self,
         address: str,
     ) -> DeviceConfig:
         address = address.strip().upper()
 
-        try:
-            return self.devices[address]
-        except KeyError:
-            device = DeviceConfig(
-                address=address,
-                name=address,
-            )
-            self.devices[address] = device
-            return device
+        with self._devices_lock:
+            try:
+                return self.devices[address]
+            except KeyError:
+                device = DeviceConfig(
+                    address=address,
+                    name=address,
+                )
+                self.devices[address] = device
+                return device
 
     def _address_allowed_by_config(
         self,
@@ -1145,7 +1163,10 @@ class Bridge:
 
         messages: list[DiscoveryMessage] = []
 
-        for device in self.devices.values():
+        with self._devices_lock:
+            devices = list(self.devices.values())
+
+        for device in devices:
             messages.extend(
                 self.discovery.discovery_messages(
                     device,
@@ -1328,7 +1349,10 @@ class Bridge:
 
         messages = []
 
-        for device in self.devices.values():
+        with self._devices_lock:
+            devices = list(self.devices.values())
+
+        for device in devices:
             messages.extend(
                 self.discovery.discovery_messages(
                     device,
@@ -1550,7 +1574,7 @@ class Bridge:
                         False,
                     )
                 ),
-                "configured": configured_profile_diagnostics(self.devices),
+                "configured": configured_profile_diagnostics(self._devices_snapshot()),
             },
         }
 

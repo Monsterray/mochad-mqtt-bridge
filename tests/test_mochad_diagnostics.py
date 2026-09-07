@@ -1,4 +1,5 @@
 import json
+import threading
 import unittest
 from types import SimpleNamespace
 
@@ -21,6 +22,9 @@ class MochadDiagnosticTests(unittest.TestCase):
     def test_requests_expected_mochad_diagnostic_commands(self):
         mochad = FakeMochadClient()
         bridge = object.__new__(Bridge)
+        # object.__new__ skips Bridge.__init__, so the lock it installs
+        # around self.devices has to be added by hand here too.
+        bridge._devices_lock = threading.RLock()
         bridge.clients = SimpleNamespace(mochad=mochad)
 
         bridge._request_mochad_diagnostics()
@@ -64,6 +68,9 @@ class MochadDiagnosticTests(unittest.TestCase):
 
     def test_merges_diagnostics_into_minimal_status_payload(self):
         bridge = object.__new__(Bridge)
+        # object.__new__ skips Bridge.__init__, so the lock it installs
+        # around self.devices has to be added by hand here too.
+        bridge._devices_lock = threading.RLock()
         bridge._mochad_diagnostics = MochadDiagnostics()
 
         bridge._merge_mochad_diagnostics(
@@ -107,6 +114,9 @@ class MochadDiagnosticTests(unittest.TestCase):
 
     def test_bridge_status_payload_contains_only_safe_tls_attributes(self):
         bridge = object.__new__(Bridge)
+        # object.__new__ skips Bridge.__init__, so the lock it installs
+        # around self.devices has to be added by hand here too.
+        bridge._devices_lock = threading.RLock()
         bridge.config = SimpleNamespace(
             allow_experimental_profiles=False,
             mqtt_tls=MqttTlsConfig(
@@ -154,6 +164,9 @@ class MochadDiagnosticTests(unittest.TestCase):
             allow_experimental=True,
         )
         bridge = object.__new__(Bridge)
+        # object.__new__ skips Bridge.__init__, so the lock it installs
+        # around self.devices has to be added by hand here too.
+        bridge._devices_lock = threading.RLock()
         bridge.config = SimpleNamespace(
             allow_experimental_profiles=True,
             mqtt_tls=MqttTlsConfig(),
