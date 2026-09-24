@@ -171,6 +171,7 @@ class MqttClient:
         self._connect_callback: ConnectionCallback | None = None
         self._disconnect_callback: DisconnectCallback | None = None
         self._connected = False
+        self._disconnect_requested = False
 
         self._configure_client()
 
@@ -203,6 +204,7 @@ class MqttClient:
         self._disconnect_callback = callback
 
     def connect(self) -> None:
+        self._disconnect_requested = False
         _LOG.info(
             "Connecting to MQTT broker host=%s port=%s username_configured=%s tls_enabled=%s",
             self.host,
@@ -243,6 +245,7 @@ class MqttClient:
         self._client.loop_start()
 
     def disconnect(self) -> None:
+        self._disconnect_requested = True
         try:
             self._client.disconnect()
         finally:
@@ -471,6 +474,14 @@ class MqttClient:
         *args,
     ) -> None:
         self._connected = False
+        if self._disconnect_requested:
+            _LOG.info("MQTT transport closed for bridge shutdown")
+            if self._disconnect_callback:
+                try:
+                    self._disconnect_callback(None)
+                except Exception:
+                    _LOG.exception("MQTT disconnect callback failed")
+            return
         reason_code = self._disconnect_reason_code(args)
         reason_label = self._reason_code_label(reason_code)
         reason_number = self._reason_code_as_int(reason_code)

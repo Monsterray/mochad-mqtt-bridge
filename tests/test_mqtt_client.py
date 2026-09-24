@@ -292,6 +292,24 @@ class MqttClientRoutingTests(unittest.TestCase):
         self.assertEqual(fake.calls, ["disconnect", "loop_stop"])
         self.assertFalse(client.connected)
 
+    def test_intentional_disconnect_is_not_reported_as_auth_failure(self):
+        fake = AsyncFakePahoClient()
+        client = MqttClient(
+            host="mosquitto",
+            client_factory=lambda client_id: fake,
+        )
+        disconnected = []
+        client.set_disconnect_callback(disconnected.append)
+        client._on_connect(fake, None, None, 0)
+
+        with self.assertLogs("mqtt_client", level="INFO") as logs:
+            client.disconnect()
+            client._on_disconnect(fake, None, 128)
+
+        self.assertEqual(disconnected, [None])
+        self.assertIn("MQTT transport closed for bridge shutdown", " ".join(logs.output))
+        self.assertNotIn("authorization failed", " ".join(logs.output))
+
     def test_later_broker_appearance_restores_subscription_and_callback(self):
         fake = AsyncFakePahoClient()
         client = MqttClient(
