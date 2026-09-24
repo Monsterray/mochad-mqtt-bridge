@@ -266,7 +266,7 @@ class Bridge:
 
     def stop(self) -> None:
         started = time.monotonic()
-        _LOG.info("Stopping bridge transports")
+        _LOG.info("Bridge shutdown started")
         self._running = False
         self._stopping = True
         self.clients.mochad.stop()
@@ -281,6 +281,7 @@ class Bridge:
             time.monotonic() - started,
         )
         self._write_health("stopped")
+        _LOG.info("Bridge stopped elapsed=%.3fs", time.monotonic() - started)
 
     def _publish_shutdown_status(self) -> None:
         if not self.clients.mqtt.connected:
@@ -928,13 +929,11 @@ class Bridge:
         self,
         reason_code: int | None = None,
     ) -> None:
-        _LOG.warning(
-            "MQTT disconnected reason_code=%s",
-            reason_code,
-        )
         if self._stopping:
-            _LOG.info("MQTT disconnected during bridge shutdown")
+            _LOG.info("MQTT connection closed during bridge shutdown")
             return
+
+        _LOG.warning("MQTT disconnected reason_code=%s", reason_code)
 
         self.execute_actions(self.state.mqtt_disconnected())
         self._write_health("starting")
@@ -951,6 +950,9 @@ class Bridge:
         self,
         error: Exception | None = None,
     ) -> None:
+        if self._stopping:
+            _LOG.info("mochad connection closed during bridge shutdown")
+            return
         if error is not None:
             _LOG.warning("mochad disconnected: %s", error)
         else:

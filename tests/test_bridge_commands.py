@@ -629,6 +629,23 @@ class DeviceCommandRoutingTests(unittest.TestCase):
 
 
 class BridgeShutdownTests(unittest.TestCase):
+    def test_expected_transport_closures_are_logged_as_shutdown(self):
+        bridge = Bridge(
+            minimal_config(),
+            mqtt_client=FakeMqttClient(),
+            mochad_client=FakeMochadClient(),
+        )
+        bridge._stopping = True
+
+        with self.assertLogs("bridge", level="INFO") as logs:
+            bridge._on_mochad_disconnected()
+            bridge._on_mqtt_disconnected(reason_code=128)
+
+        output = " ".join(logs.output)
+        self.assertIn("mochad connection closed during bridge shutdown", output)
+        self.assertIn("MQTT connection closed during bridge shutdown", output)
+        self.assertNotIn("WARNING", output)
+
     def test_stop_publishes_retained_shutdown_status_before_disconnect(self):
         mqtt = FakeMqttClient()
         mochad = FakeMochadClient()

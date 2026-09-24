@@ -160,7 +160,8 @@ class MochadClient:
                     self._read_loop()
             except Exception as exc:
                 error = exc
-                _LOG.warning("mochad transport disconnected: %s", exc)
+                if not self._stop_event.is_set():
+                    _LOG.warning("mochad transport disconnected: %s", exc)
             finally:
                 self.disconnect()
 
