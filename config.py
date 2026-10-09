@@ -1079,12 +1079,21 @@ def load_config() -> Config:
 ###############################################################################
 
 
+class TimestampFormatter(logging.Formatter):
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        from datetime import datetime
+
+        return datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds")
+
+
 def configure_logging(config: Config) -> None:
 
+    handler = logging.StreamHandler()
+    handler.setFormatter(TimestampFormatter(LOG_FORMAT))
     logging.basicConfig(
         level=getattr(
             logging,
             config.log_level.upper(),
         ),
-        format=LOG_FORMAT,
+        handlers=[handler],
     )

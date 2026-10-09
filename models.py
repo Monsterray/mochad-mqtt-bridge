@@ -460,6 +460,10 @@ class MochadDiagnostics:
 
     last_updated: float | None = None
 
+    health_last_updated: float | None = None
+
+    health_updated_monotonic: float | None = None
+
 
 class ConnectionState(Enum):
     """Connection state for MQTT and mochad."""

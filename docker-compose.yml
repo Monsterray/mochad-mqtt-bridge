@@ -9,6 +9,11 @@ services:
     image: x10-mochad-mqtt-bridge:local
     container_name: mochad-mqtt-bridge
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     environment:
       PUID: ${PUID:-911}
