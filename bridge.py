@@ -82,6 +82,8 @@ REPEATABLE_COMMANDS = {
 }
 
 MAX_QUEUED_DEVICE_COMMANDS = 100
+MOCHAD_HEALTH_INTERVAL = 30.0
+MOCHAD_HEALTH_MAX_AGE = 60.0
 
 
 @dataclass(slots=True)
@@ -200,6 +202,8 @@ class Bridge:
         )
         self._ensure_runtime_config_files()
         self._mochad_diagnostics = MochadDiagnostics()
+        self._last_health_request = 0.0
+        self._discovery_metadata: tuple | None = None
         _LOG.info(
             "Discovery cleanup enabled=%s registry_path=%s",
             config.discovery_cleanup,
@@ -325,6 +329,7 @@ class Bridge:
 
         while self._running:
             self._check_config_file_reload()
+            self._poll_mochad_health()
             self._write_health(
                 "running" if self.state.available else "starting"
             )
@@ -551,6 +556,13 @@ class Bridge:
         if self.clients.mqtt.connected:
             return False
 
+        if isinstance(action, (PublishAvailabilityAction, PublishStatusAction)):
+            _LOG.debug(
+                "Deferring replayable MQTT publication until reconnect action=%s",
+                type(action).__name__,
+            )
+            return True
+
         self._dropped_mqtt_publishes += 1
         _LOG.warning(
             "Dropping MQTT publish while broker is disconnected action=%s dropped=%d",
@@ -592,15 +604,18 @@ class Bridge:
         if not self.clients.mochad.connected:
             return "mochad disconnected"
 
-        diagnostics = self._mochad_diagnostics
-        if diagnostics.usb_connected is False:
-            return "mochad USB disconnected"
+        with self._devices_lock:
+            diagnostics = self._mochad_diagnostics
+            if self._mochad_health_supported() and not self._mochad_health_fresh():
+                return "mochad USB health awaiting fresh response"
+            if diagnostics.usb_connected is False:
+                return "mochad USB disconnected"
 
-        if diagnostics.endpoints_ready is False:
-            return "mochad USB endpoints not ready"
+            if diagnostics.endpoints_ready is False:
+                return "mochad USB endpoints not ready"
 
-        if diagnostics.transfers_ready is False:
-            return "mochad USB transfers not ready"
+            if diagnostics.transfers_ready is False:
+                return "mochad USB transfers not ready"
 
         return None
 
@@ -952,6 +967,8 @@ class Bridge:
 
     def _on_mochad_connected(self) -> None:
         _LOG.info("mochad connected")
+        self._last_health_request = time.monotonic()
+        self._mochad_diagnostics.health_updated_monotonic = None
         self.execute_actions(self.state.mochad_connected())
         self._request_mochad_diagnostics()
         self._write_health(
@@ -973,6 +990,7 @@ class Bridge:
         self._mochad_diagnostics.usb_connected = None
         self._mochad_diagnostics.endpoints_ready = None
         self._mochad_diagnostics.transfers_ready = None
+        self._mochad_diagnostics.health_updated_monotonic = None
         self._mochad_diagnostics.last_updated = time.time()
         self.execute_actions(self.state.mochad_disconnected())
         self._write_health("starting")
@@ -982,13 +1000,13 @@ class Bridge:
         line: str,
     ) -> None:
         line = line.strip("\r\n")
-        _LOG.info("mochad line received raw=%s", line)
+        _LOG.debug("mochad line received raw=%s", line)
 
         if self._handle_mochad_diagnostic_line(line):
             return
 
         event = self.parser.parse_line(line)
-        _LOG.info(
+        _LOG.debug(
             "mochad line parsed event_type=%s",
             type(event).__name__ if event is not None else "None",
         )
@@ -1190,6 +1208,7 @@ class Bridge:
             )
             self.clients.mqtt.publish_discovery(message)
 
+        self._discovery_metadata = self._current_discovery_metadata()
         return len(messages)
 
     def _run_discovery_cleanup(
@@ -1413,6 +1432,43 @@ class Bridge:
                 )
                 return
 
+    def _mochad_health_supported(self) -> bool:
+        diagnostics = self._mochad_diagnostics
+        return (
+            "health" in diagnostics.commands
+            or diagnostics.health_last_updated is not None
+        )
+
+    def _mochad_health_fresh(self) -> bool:
+        updated = self._mochad_diagnostics.health_updated_monotonic
+        return updated is not None and time.monotonic() - updated < MOCHAD_HEALTH_MAX_AGE
+
+    def _poll_mochad_health(self) -> None:
+        if not self.clients.mochad.connected or not self._mochad_health_supported():
+            return
+        now = time.monotonic()
+        if now - self._last_health_request < MOCHAD_HEALTH_INTERVAL:
+            return
+        self._last_health_request = now
+        with self._devices_lock:
+            stale = not self._mochad_health_fresh()
+            if stale:
+                self._mochad_diagnostics.usb_connected = None
+                self._mochad_diagnostics.endpoints_ready = None
+                self._mochad_diagnostics.transfers_ready = None
+        if stale:
+            _LOG.warning("mochad USB health is stale; commands wait for a fresh health response")
+            if self.clients.mqtt.connected:
+                self.clients.mqtt.publish_status(self._bridge_status_payload(), retain=True)
+        try:
+            self.clients.mochad.send_line("health")
+        except (ConnectionError, OSError) as exc:
+            _LOG.warning("mochad health refresh failed: %s", exc)
+
+    def _current_discovery_metadata(self) -> tuple:
+        diagnostics = self._mochad_diagnostics
+        return (diagnostics.daemon, diagnostics.version, diagnostics.controller)
+
     def _handle_mochad_diagnostic_line(
         self,
         line: str,
@@ -1433,8 +1489,20 @@ class Bridge:
         if kind is None:
             return False
 
-        self._merge_mochad_diagnostics(payload)
-        _LOG.info(
+        with self._devices_lock:
+            previous_health = (
+                self._mochad_diagnostics.usb_connected,
+                self._mochad_diagnostics.endpoints_ready,
+                self._mochad_diagnostics.transfers_ready,
+            )
+            self._merge_mochad_diagnostics(payload)
+            health_changed = previous_health != (
+                self._mochad_diagnostics.usb_connected,
+                self._mochad_diagnostics.endpoints_ready,
+                self._mochad_diagnostics.transfers_ready,
+            )
+        _LOG.log(
+            logging.INFO if kind != "health" or health_changed else logging.DEBUG,
             "mochad diagnostic received kind=%s version=%s controller=%s usb_connected=%s",
             kind,
             self._mochad_diagnostics.version,
@@ -1442,20 +1510,22 @@ class Bridge:
             self._mochad_diagnostics.usb_connected,
         )
 
+        if kind == "health":
+            self._flush_queued_device_commands()
+
         if self.clients.mqtt.connected:
             self.clients.mqtt.publish_status(
                 self._bridge_status_payload(),
                 retain=True,
             )
 
-            if kind in {"hello", "health"}:
+            if kind in {"hello", "health"} and (
+                self._current_discovery_metadata() != self._discovery_metadata
+            ):
                 self._publish_current_discovery()
                 self._save_discovery_registry(
                     self._desired_discovery_topics()
                 )
-
-        if kind == "health":
-            self._flush_queued_device_commands()
 
         return True
 
@@ -1480,6 +1550,14 @@ class Bridge:
     ) -> None:
         diagnostics = self._mochad_diagnostics
         diagnostics.last_updated = time.time()
+        if self._mochad_diagnostic_kind(payload) == "health":
+            ready_fields = ("usb_connected", "endpoints_ready", "transfers_ready")
+            valid = type(payload.get("usb_connected")) is bool and all(
+                type(payload[field]) is bool for field in ready_fields if field in payload
+            )
+            diagnostics.health_updated_monotonic = time.monotonic() if valid else None
+            if valid:
+                diagnostics.health_last_updated = diagnostics.last_updated
 
         for field_name in (
             "daemon",
@@ -1498,7 +1576,10 @@ class Bridge:
             "listeners",
         ):
             if field_name in payload:
-                setattr(diagnostics, field_name, payload[field_name])
+                value = payload[field_name]
+                if field_name in {"usb_connected", "endpoints_ready", "transfers_ready"}:
+                    value = value if type(value) is bool else None
+                setattr(diagnostics, field_name, value)
 
         for field_name in ("commands", "legacy_commands"):
             if field_name in payload and isinstance(payload[field_name], list):
@@ -1607,6 +1688,8 @@ class Bridge:
                 "raw_data": diagnostics.raw_data,
             },
             "health": {
+                "last_updated": diagnostics.health_last_updated,
+                "fresh": self._mochad_health_fresh(),
                 "uptime_seconds": diagnostics.uptime_seconds,
                 "usb_connected": diagnostics.usb_connected,
                 "controller": diagnostics.controller,

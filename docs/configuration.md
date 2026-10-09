@@ -155,5 +155,27 @@ Destructive maintenance controls require
 
 ## Debugging
 
+Bridge timestamps include milliseconds and a UTC offset. Existing `TZ`
+defaults are unchanged; set the same `TZ` for both containers if you want
+matching local times. Mochad protocol timestamps remain in its local time.
+
+For servers that advertise `health` (or return a health response), the bridge
+requests fresh USB readiness every 30 seconds. After 60 seconds without a
+valid health response, readiness is unknown and commands wait in the existing
+bounded queue. A fresh ready response resumes queued commands. Legacy servers
+without health diagnostics retain their existing behavior. Retained bridge
+status includes `mochad.health.last_updated` and `mochad.health.fresh`.
+These are transport observations, not physical device confirmation.
+
+Unchanged health responses do not republish discovery. MQTT reconnect and
+explicit `REDISCOVER` still republish discovery. Raw received lines and parser
+classification are DEBUG logs; USB readiness changes remain INFO.
+Replayable status/availability updates deferred before MQTT connects do not
+count as dropped events; actual lost event publications still do.
+
+The Compose example uses `json-file` log rotation: three 10 MB files per
+container. Recreate containers after changing this policy. Preserve relevant
+logs separately before rotation removes them.
+
 Set `BRIDGE_DEBUG_WIRE=true` to log mochad TCP reads and MQTT sends. Passwords,
 private keys, and secret contents are never logged.
